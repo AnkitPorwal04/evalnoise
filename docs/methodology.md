@@ -2,13 +2,13 @@
 
 ## Define The Question Before Running
 
-Specify the workload population, treatment settings, outcome contract, repetition unit, timing scope, and exclusions. For v0.1, the population is the fixed configured scripted suite, and a clean pass means the expected process exit without an observed OOM event. This is not independently verified task correctness.
+Specify the workload population, treatment settings, outcome contract, repetition unit, timing scope, and exclusions. The population remains the fixed configured scripted suite. Exit-only tasks require the expected process exit without an observed OOM event. Optional v0.2 verified tasks additionally require a valid positive verdict from a separately executed trusted verifier. Neither contract establishes LLM capability or general correctness beyond its configured checks.
 
 ## Controls
 
 The memory calibration is a positive control: a known allocation exceeds the restrictive budget but fits the roomy budget. The identical-profile experiment is an A/A control. Run them separately on the same otherwise-idle engine. Do not combine both experiments concurrently and then interpret latency differences as isolated resource effects.
 
-Before comparative measurement, prepare images, inspect their provenance, confirm native architecture, check VM capacity, and decide whether to perform a separate warm-up. v0.1 does not flush page caches or discard automatic warm-ups. Both the image cache and host page cache policy are recorded honestly as pre-existing/uncontrolled.
+Before comparative measurement, prepare images, inspect their provenance, confirm native architecture, check VM capacity, and decide whether to perform a separate warm-up. The runner does not flush page caches or discard automatic warm-ups. Both the image cache and host page cache policy are recorded honestly as pre-existing/uncontrolled.
 
 ## Assignment And Dependence
 
@@ -18,11 +18,13 @@ The repeated records are dependent through tasks, host state, time, and scheduli
 
 ## Current Estimands
 
-Recorded pass rate: clean passed records / all recorded records for a profile. Missing trials are not in this denominator and remain separately visible. Cancellation records are included in the recorded denominator but are not passes.
+Recorded pass rate: final passed records / all recorded records for a profile. Missing trials are not in this denominator and remain separately visible. Cancelled and pending-verification records are included in the recorded denominator but are not passes. Task-level outcome rows distinguish exit-only and independent-verification contracts.
 
-Paired pass delta: average of candidate-pass minus baseline-pass over task/repetition pairs where both records exist and neither is cancelled. Setup/runtime/unknown and OOM-observed records are non-passes in this descriptive quantity. It is not a pure reasoning-success estimate. The first configured profile is the baseline, independent of execution order.
+Paired pass delta: average of candidate-pass minus baseline-pass over task/repetition pairs where both records exist and neither is cancelled or pending verification. Setup/runtime/unknown, artifact/verifier errors, negative verdicts, and OOM-observed records are non-passes in this descriptive quantity. It measures end-to-end recorded success, not incorrect answers alone or pure reasoning success. The first configured profile is the baseline, independent of execution order.
 
-Successful-duration median: median daemon start-to-finish duration among clean passes with valid timestamps. A profile can have a different set of successful tasks. Comparing these medians alone has survivor bias and does not establish a speedup.
+Successful-duration median: median workload daemon start-to-finish duration among final passes with valid timestamps. It excludes verifier duration. A profile can have a different set of successful tasks. Comparing these medians alone has survivor bias and does not establish a speedup.
+
+Verified tasks execute only after the entire workload batch has finished and been cleaned up. Verifiers have separate resource budgets, run sequentially, and retain their own timing and intervention evidence. This avoids direct concurrent interference but does not erase cache, thermal, or time effects on subsequent batches.
 
 ## Timing And Intervention
 
