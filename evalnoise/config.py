@@ -38,11 +38,22 @@ def identifier(value):
 
 
 @dataclass(frozen=True)
+class Verifier:
+    image: str
+    command: tuple[str, ...]
+    version: str
+    cpus: float
+    memory_mb: int
+    timeout_s: float
+
+
+@dataclass(frozen=True)
 class Task:
     id: str
     image: str
     command: tuple[str, ...]
     expected_exit: int = 0
+    verifier: Verifier | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +82,17 @@ class Experiment:
         return hashlib.sha256(json.dumps(self.data(), sort_keys=True).encode()).hexdigest()
 
 
+def process_spec(value):
+    image, command = value["image"], value["command"]
+    if not isinstance(image, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}", image):
+        raise ConfigError("Invalid image reference")
+    if not isinstance(command, list) or not 1 <= len(command) <= 64:
+        raise ConfigError("command must be an argv array of 1..64 strings, not a shell string")
+    if any(not isinstance(arg, str) or len(arg) > 8192 or "\0" in arg for arg in command) or not command[0]:
+        raise ConfigError("Invalid command argument")
+    return image, tuple(command)
+
+
 def parse(value):
     keys(value, ("schema_version", "name", "seed", "repeats", "tasks", "profiles"), ("sample_interval_s",))
     if type(value["schema_version"]) is not int or value["schema_version"] != 1:
@@ -86,16 +108,19 @@ def parse(value):
             raise ConfigError(f"{field} must contain 1..{cap} entries")
     tasks = []
     for task in value["tasks"]:
-        keys(task, ("id", "image", "command"), ("expected_exit",))
-        image, command = task["image"], task["command"]
-        if not isinstance(image, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,255}", image):
-            raise ConfigError("Invalid image reference")
-        if not isinstance(command, list) or not 1 <= len(command) <= 64:
-            raise ConfigError("command must be an argv array of 1..64 strings, not a shell string")
-        if any(not isinstance(arg, str) or len(arg) > 8192 or "\0" in arg for arg in command) or not command[0]:
-            raise ConfigError("Invalid command argument")
+        keys(task, ("id", "image", "command"), ("expected_exit", "verifier"))
+        image, command = process_spec(task)
+        verifier = None
+        if task.get("verifier") is not None:
+            spec = task["verifier"]
+            keys(spec, ("image", "command", "version", "cpus", "memory_mb", "timeout_s"))
+            verifier_image, verifier_command = process_spec(spec)
+            verifier = Verifier(verifier_image, verifier_command, identifier(spec["version"]),
+                                number(spec["cpus"], "verifier.cpus", .1, 64),
+                                int(number(spec["memory_mb"], "verifier.memory_mb", 16, 65536, True)),
+                                number(spec["timeout_s"], "verifier.timeout_s", .1, 3600))
         tasks.append(Task(identifier(task["id"]), image, tuple(command),
-                          int(number(task.get("expected_exit", 0), "expected_exit", 0, 255, True))))
+                          int(number(task.get("expected_exit", 0), "expected_exit", 0, 255, True)), verifier))
     profiles = []
     for profile in value["profiles"]:
         keys(profile, ("id", "cpus", "memory_mb", "timeout_s"), ("concurrency",))
