@@ -31,7 +31,16 @@ An evaluation engineer should be able to define execution conditions, run a repr
 
 ## Platform Requirements, Not Yet Delivered
 
-Independent verifier isolation; agent and benchmark adapters; provider/version provenance; raw resource telemetry; host-isolation policies; statistically reviewed uncertainty estimates; experiment comparison history; live progress; reviewable share bundles; remote worker authentication; artifact retention and access control.
+Agent and benchmark adapters; repository/patch artifact transfer; provider/version provenance; raw resource telemetry; host-isolation policies; statistically reviewed uncertainty estimates; experiment comparison history; live progress; reviewable share bundles; remote worker authentication; artifact retention and access control.
+
+## v0.2 JSON Verification Acceptance Criteria
+
+- Successful candidate execution is durably pending until a separate trusted check accepts it.
+- Verifier errors remain distinct from incorrect answers and never produce a pass.
+- Candidate data cannot modify verifier code or supply its own accepted verdict.
+- Hashes bind both image identities and task/verifier definitions; inconsistent records cannot be merged into a report.
+- Verification runs outside workload batches with explicit budgets and retained lifecycle evidence.
+- Existing M0 configs/reports remain usable with their original exit-contract interpretation.
 
 ## Non-Goals
 

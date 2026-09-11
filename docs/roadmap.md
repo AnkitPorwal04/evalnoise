@@ -8,13 +8,13 @@ Strict configs, deterministic plans, hardened trusted-workload execution, image/
 
 Gate: real memory pressure, nonzero exit, exit-137, timeout, and cleanup tests; complete and incomplete reports; clear limits. Remote CI and additional host validation remain external checks even after local acceptance.
 
-## M1: Task And Verifier Contract - Next
+## M1: Task And Verifier Contract - JSON Artifact Slice Implemented
 
-Separate task setup, workload/agent execution, and trusted verification. Define task content/version hashes, verifier version, input/output schemas, verifier resources, and artifact transfer rules. Add genuinely task-specific success checks instead of relying only on an exit contract.
+Independent trusted verifier containers, bounded JSON handoff, task/image/verifier hashes, explicit verifier resources/version, durable pending checkpoints, separate execution/correctness outcomes, and known-answer checks are implemented. See [the protocol](verification.md). Setup is prebuilt-image based; repository/patch transfer and a separate dynamic setup stage remain deferred, not silently implied by this milestone.
 
-Gate: verifier failure cannot become agent failure or success; malicious task output cannot modify the verifier; fixture outcomes remain deterministic; version mismatches refuse comparison.
+Gate for this slice: verifier failure is neither an incorrect answer nor a pass; candidate-emitted verdicts cannot replace the trusted check; fixtures exercise real separate containers; inconsistent task/verifier hashes refuse report reconstruction. Cross-run comparisons and adversarial-code isolation are not delivered.
 
-## M2: Measurement Fidelity
+## M2: Measurement Fidelity - Next
 
 Streaming raw Engine/cgroup telemetry, throttling counters, resource-enforcement probes, explicit Docker endpoint identity, host/VM metadata, same-engine run coordination, crash recovery, and optional affinity policies. Quantify sampler-on versus sampler-off overhead before enabling it by default.
 
