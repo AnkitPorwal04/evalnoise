@@ -4,7 +4,9 @@
 
 EvalNoise is a research-driven experiment runner for controlled resource-profile comparisons. It preserves the configuration, randomized schedule, image identity, container state, bounded logs, missing trials, and descriptive comparisons in an offline experiment notebook.
 
-**Status: v0.2 measurement foundation with independent JSON-artifact verification, not a finished agent-evaluation platform.** The fixtures are scripted calibration workloads. They validate measurement plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
+**Status: v0.3 measurement fidelity on top of the v0.2 verification foundation, not a finished agent-evaluation platform.** The fixtures are scripted calibration workloads. They validate measurement plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
+
+v0.3 adds a pinned Docker endpoint and daemon identity, raw bounded Engine telemetry over a **local Unix socket only**, cgroup throttling counters recorded without invented zeros, a request-echo enforcement audit, an optional reviewed cgroup probe, optional CPU affinity, advisory single-runner coordination for one local user and engine, and read-only recovery diagnosis with narrowly scoped cleanup. **Sampling stays opt-in and off by default:** the recorded sampler-on/sampler-off contrast differs by less than the harness can resolve, which establishes no overhead figure in either direction rather than showing there is none.
 
 Repository: [AnkitPorwal04/evalnoise](https://github.com/AnkitPorwal04/evalnoise). Licensing has not been selected yet; this is not presented as a licensed open-source release.
 
@@ -27,6 +29,8 @@ EvalNoise asks a narrower, auditable question first: **when we run the same trus
 - Offline HTML, JSON summaries, and CSV exports with explicit denominators.
 - Optional independent verifier containers with separate resource budgets and data-only artifact handoff.
 - Task/verifier content hashes, execution-versus-correctness outcomes, and interruption-safe verification checkpoints.
+- Advisory per-daemon run coordination that survives `SIGKILL`, plus read-only diagnosis and ownership-checked cleanup by resolved container ID.
+- Bounded, cancel-before-cleanup telemetry collectors that detach rather than mutating evidence late or blocking container removal.
 - Unit tests, opt-in real Docker tests, and GitHub Actions across Python 3.11-3.14.
 
 ## Quick Start
@@ -57,6 +61,28 @@ Rebuild a report from existing evidence, without Docker:
 python3 -m evalnoise report runs/<experiment-run-id>
 ```
 
+## Measurement Fidelity And Recovery
+
+Optional raw Engine telemetry requires a local Unix socket endpoint. Set `sample_interval_s` on the experiment or on an individual profile; it is a retention filter over the daemon's own sample timestamps, not a request for a sampling rate. Remote endpoints keep the coarser `docker stats` snapshot and say so in the report.
+
+Sampling is **off by default**. Run `sampler-overhead-e60d93977bd0` recorded 20 of 20 paired trials, a `sampler-off` successful median of 3.561533 s against a `sampler-on` median of 3.5607595 s over 10 pairs each, with 40 samples received, 20 retained, and zero leaked reader threads. The two medians differ by under a millisecond and the sampled arm is nominally the faster one, so the contrast resolves no overhead in either direction. It is a descriptive record of one run on one host with no statistical test attached, and deliberately not a zero-overhead claim. Both collectors are bounded and cancel before container removal; a collector that cannot be stopped is detached and reported as `thread_leaked` rather than being allowed to change a workload outcome or delay cleanup.
+
+Check what limits the engine really applied, using a separate reviewed image rather than touching the workload:
+
+```sh
+docker build -t evalnoise-probe:local probes
+python3 -m evalnoise probe experiments/calibration.json --trust-config
+```
+
+After a hard kill or daemon outage, diagnose before removing anything. Diagnosis never writes to a run directory, and cleanup only touches containers this run owns:
+
+```sh
+python3 -m evalnoise diagnose runs/<experiment-run-id>
+python3 -m evalnoise cleanup  runs/<experiment-run-id> --confirm
+```
+
+One EvalNoise run holds an advisory lock per daemon ID, so a second run against the same engine refuses to start even from a different output directory. That is cooperation between EvalNoise processes for one local user; it is not a distributed lock and does not exclude other users, tools, or general host load.
+
 Optional installation: `python3 -m pip install -e .` exposes the `evalnoise` command. Runtime dependencies are standard-library only; installation uses setuptools as the build backend.
 
 ## Independent Verification
@@ -79,7 +105,7 @@ Verifiers run sequentially **after each entire workload batch**, never beside me
 
 `aa-control.json` compares two differently named profiles with identical settings. A matching result checks basic consistency; it does not prove absence of measurement noise.
 
-Profile batches run sequentially. Within a batch, `concurrency` controls the number of workers. A profile with concurrency one cannot produce a contention experiment by itself. Concurrent profiles also require enough tasks to fill their workers. Avoid unrelated host work and other EvalNoise processes during measurement; v0.1 does not acquire a daemon-wide experiment lock.
+Profile batches run sequentially. Within a batch, `concurrency` controls the number of workers. A profile with concurrency one cannot produce a contention experiment by itself. Concurrent profiles also require enough tasks to fill their workers. Both properties are checked against engine-reported container timestamps under real CPU load: trials within a profile overlap, and profile batches do not. Since v0.3 a run holds an advisory per-daemon lock, so another EvalNoise process is refused rather than silently competing — but that lock does not exclude unrelated host work, other users, or other tools, so avoid those during measurement.
 
 The report's pass rate is clean final passes divided by **recorded** trials, including recorded infrastructure failures, verification errors, cancellations, and pending verification in that denominator. Missing trials are displayed separately. Paired deltas exclude missing, cancelled, and pending-verification pairs. Neither quantity is a model score. Successful-duration medians describe workloads only, excluding verifier time, and can compare different survivor sets; they are not unconditional speedups. Per-task rows distinguish exit-code and independently verified contracts.
 
@@ -101,14 +127,14 @@ The report's pass rate is clean final passes divided by **recorded** trials, inc
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 -m compileall -q evalnoise
+python3 -m compileall -q evalnoise probes
 EVALNOISE_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 ```
 
-The final command creates and removes real containers using both previously built images. Check [GitHub Actions](https://github.com/AnkitPorwal04/evalnoise/actions) for the result of the specific commit; local success is not proof of remote CI success.
+v0.3 runs 199 tests: 183 unit and 16 real Docker methods, with no skips once the opt-in variable is set. The final command creates and removes real containers using the previously built images, removes only containers it created, and never prunes. Run it sequentially and alone — a second concurrent run is refused by the engine lock by design. Read its stderr for thread tracebacks rather than trusting the exit code, because a telemetry reader thread can die through `threading.excepthook` without failing the run. Check [GitHub Actions](https://github.com/AnkitPorwal04/evalnoise/actions) for the result of the specific commit; local success is not proof of remote CI success.
 
 ## Current Limits
 
 No model/provider adapters, Harbor integration, repository/patch artifact transfer, API proxy, distributed workers, signed artifacts, statistical confidence intervals, web control plane, or multi-tenant isolation yet. Verifier input is a bounded JSON value, not an arbitrary filesystem or archive. No retries or resume. CPU quotas are not dedicated CPUs. Host caches and other workloads are uncontrolled. CLI polling and optional sampling add overhead. Timeouts are best-effort host deadlines, not real-time guarantees. Local evidence can be edited and logs may contain secrets.
 
-Next is measurement fidelity: engine identity, same-engine run coordination, enforcement probes, and recovery. Repository-artifact tasks and agent integration require additional design and tests. A larger dashboard comes after those foundations, not instead of them.
+Measurement fidelity — engine identity, same-engine run coordination, enforcement probes, hard-kill recovery, and loaded batch ordering — is implemented and recorded in the [validation log](docs/validation.md). Next are repository-artifact tasks and agent integration, which require additional design and tests. A larger dashboard comes after those foundations, not instead of them.
