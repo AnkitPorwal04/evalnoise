@@ -8,9 +8,16 @@ from pathlib import Path
 import statistics
 
 from .storage import write_json
+from .verification import contract_hash
 
 
 def summarize(manifest, trials):
+    if any(t.get("verifier") for t in manifest["config"]["tasks"]) and "task_contracts" not in manifest:
+        raise ValueError("Verifier-enabled evidence requires task contract hashes")
+    if "task_contracts" in manifest:
+        calculated = {task["id"]: contract_hash(task, manifest["images"]) for task in manifest["config"]["tasks"]}
+        if calculated != manifest["task_contracts"]:
+            raise ValueError("Manifest task or image content does not match its contract hashes")
     planned = {trial["id"]: batch for batch in manifest["plan"] for trial in batch["trials"]}
     ids = [trial["id"] for trial in trials]
     if len(set(ids)) != len(ids) or any(identity not in planned for identity in ids):
@@ -21,6 +28,8 @@ def summarize(manifest, trials):
             raise ValueError("Trial identity does not match the persisted plan")
         if not any(t["id"] == trial["id"] and t["task"] == trial["task"] for t in expected["trials"]):
             raise ValueError("Task identity does not match the persisted plan")
+        if "task_contracts" in manifest and trial.get("contract_sha256") != manifest["task_contracts"].get(trial["task"]):
+            raise ValueError("Trial contract hash does not match the manifest")
     profiles = []
     for profile in manifest["config"]["profiles"]:
         selected = [trial for trial in trials if trial["profile"] == profile["id"]]
@@ -41,13 +50,18 @@ def summarize(manifest, trials):
         for task in manifest["config"]["tasks"]:
             for repeat in range(manifest["config"]["repeats"]):
                 left, right = lookup.get((task["id"], repeat, baseline)), lookup.get((task["id"], repeat, profile["id"]))
-                if left and right and left["status"] != "cancelled" and right["status"] != "cancelled":
+                if left and right and left["status"] not in ("cancelled", "pending_verification") and right["status"] not in ("cancelled", "pending_verification"):
                     complete.append((left["status"] == "passed", right["status"] == "passed"))
         pairs.append({"baseline": baseline, "candidate": profile["id"], "complete_pairs": len(complete),
                       "fail_to_pass": sum(not a and b for a, b in complete),
                       "pass_to_fail": sum(a and not b for a, b in complete),
                       "paired_pass_delta": statistics.mean(int(b) - int(a) for a, b in complete) if complete else None})
+    task_outcomes = [{"task": task["id"], "profile": profile["id"],
+                      "contract": "independent_verification" if task.get("verifier") else "exit_code",
+                      "outcomes": dict(Counter(t["status"] for t in trials if t["task"] == task["id"] and t["profile"] == profile["id"]))}
+                     for task in manifest["config"]["tasks"] for profile in profiles]
     return {"run_id": manifest["run_id"], "status": manifest["status"], "profiles": profiles,
+            "task_outcomes": task_outcomes,
             "comparisons": pairs, "recorded_trials": len(trials), "planned_trials": len(planned),
             "interpretation": "Descriptive results for this fixed workload suite, not independent population trials. No causal or statistical significance claim.",
             "latency_scope": "Container start-to-finish duration for successful trials only. Failed and missing durations are not zero. Profiles may have different successful task sets; comparing these medians alone does not establish a speedup."}
@@ -60,7 +74,7 @@ def generate(directory):
     summary = summarize(manifest, trials)
     write_json(directory / "summary.json", summary)
     with (directory / "trials.csv").open("w", newline="") as stream:
-        fields = ["id", "task", "profile", "repeat", "status", "container_duration_s", "lifecycle_s"]
+        fields = ["id", "task", "profile", "repeat", "status", "execution_status", "contract_sha256", "container_duration_s", "lifecycle_s"]
         writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(trials)
@@ -74,12 +88,13 @@ def generate(directory):
                     f"<td>{'Not measured' if median is None else f'{median:.3f} s'} (n={profile['successful_duration_n']})</td>"
                     f"<td>{esc(', '.join(f'{key}: {value}' for key, value in profile['outcomes'].items()))}</td></tr>")
     cards = []
+    task_rows = "".join(f"<tr><th>{esc(t['task'])}</th><td>{esc(t['profile'])}</td><td>{esc(t['contract'])}</td><td>{esc(json.dumps(t['outcomes']))}</td></tr>" for t in summary["task_outcomes"])
     for comparison in summary["comparisons"]:
         delta = comparison["paired_pass_delta"]
         cards.append(f"<article><h3>{esc(comparison['candidate'])} vs {esc(comparison['baseline'])}</h3>"
                      f"<strong>{'No complete pairs' if delta is None else f'{delta * 100:+.1f} percentage points'}</strong>"
                      f"<p>{comparison['complete_pairs']} paired task/repetition observations. "
-                     f"{comparison['fail_to_pass']} fail-to-pass; {comparison['pass_to_fail']} pass-to-fail.</p></article>")
+                      f"{comparison['fail_to_pass']} non-pass to pass; {comparison['pass_to_fail']} pass to non-pass. Non-passes include recorded infrastructure and verifier errors, not just incorrect answers.</p></article>")
     details = "".join(f"<details><summary>{esc(t['id'])} <b>{esc(t['status'])}</b></summary>"
                       f"<p>Container: {esc(t['container_name'])}</p>"
                       f"<pre>{esc(json.dumps({k: v for k, v in t.items() if k != 'logs'}, indent=2))}</pre>"
@@ -93,9 +108,10 @@ def generate(directory):
 <p>Infrastructure changes the conditions of a test. This report preserves what ran, what finished, and what the evidence supports.</p>
 <small>Run {esc(manifest['run_id'])} / {esc(manifest['started_at'])} / Status: {esc(manifest['status'])}</small></header>
 <p class="notice">{summary['recorded_trials']} of {summary['planned_trials']} planned trials recorded. {esc(summary['interpretation'])}</p>
-<h2>Resource profiles</h2><div class="scroll"><table><thead><tr><th>Profile</th><th>CPU ceiling / RAM ceiling</th><th>Recorded / planned</th><th>Pass / recorded</th><th>Successful median</th><th>Outcomes</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+<h2>Resource profiles</h2><p>Pass / recorded includes cancelled, pending, and error records in its denominator. It is not a correctness rate among resolved answers.</p><div class="scroll"><table><thead><tr><th>Profile</th><th>CPU ceiling / RAM ceiling</th><th>Recorded / planned</th><th>Pass / recorded</th><th>Workload median (final passes)</th><th>Outcomes</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
 <p><small>{esc(summary['latency_scope'])} Sampling interval: {esc(manifest['config']['sample_interval_s'])} s (0 means disabled). CPU limits are not reservations. Memory swap is disabled.</small></p>
 <h2>Paired outcome changes</h2><div class="comparisons">{''.join(cards) or '<p>Only one profile: no comparison.</p>'}</div>
+<h2>Task contracts and outcomes</h2><p>Execution success is not correctness. Verified tasks require a successful trusted verifier and a valid positive verdict. Verifier failures are not incorrect answers. Durations above describe workloads only, excluding verification.</p><div class="scroll"><table><thead><tr><th>Task</th><th>Profile</th><th>Contract</th><th>Outcomes</th></tr></thead><tbody>{task_rows}</tbody></table></div>
 <h2>Environment and provenance</h2><details><summary>Inspect manifest, schedule, image identities, and configuration</summary><pre>{esc(json.dumps(manifest, indent=2))}</pre></details>
 <h2>Trial evidence</h2>{details or '<p>No trials were recorded. This is not a completed measurement.</p>'}
 <footer>Generated locally by EvalNoise. No scripts, remote fonts, trackers, or network requests. Workload logs may contain sensitive data; review before sharing. Evidence is inspectable, not cryptographically attested.</footer></main></html>"""
