@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "name": "independent-verification",
+  "seed": 42,
+  "repeats": 2,
+  "tasks": [
+    {
+      "id": "correct-answer", "image": "evalnoise-workloads:local",
+      "command": ["python", "/opt/evalnoise/candidate.py", "correct"],
+      "verifier": {"image": "evalnoise-verifier:local", "command": ["python", "/opt/verifier/verifier.py"], "version": "sum-v1", "cpus": 1, "memory_mb": 128, "timeout_s": 5}
+    },
+    {
+      "id": "wrong-answer", "image": "evalnoise-workloads:local",
+      "command": ["python", "/opt/evalnoise/candidate.py", "wrong"],
+      "verifier": {"image": "evalnoise-verifier:local", "command": ["python", "/opt/verifier/verifier.py"], "version": "sum-v1", "cpus": 1, "memory_mb": 128, "timeout_s": 5}
+    },
+    {
+      "id": "spoofed-verdict", "image": "evalnoise-workloads:local",
+      "command": ["python", "/opt/evalnoise/candidate.py", "spoof"],
+      "verifier": {"image": "evalnoise-verifier:local", "command": ["python", "/opt/verifier/verifier.py"], "version": "sum-v1", "cpus": 1, "memory_mb": 128, "timeout_s": 5}
+    }
+  ],
+  "profiles": [{"id": "standard", "cpus": 1, "memory_mb": 128, "timeout_s": 10}]
+}
