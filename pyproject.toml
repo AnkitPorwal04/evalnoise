@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evalnoise"
+version = "0.1.0"
+description = "Reproducible infrastructure-sensitivity experiments for evaluation workloads"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+evalnoise = "evalnoise.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["evalnoise*"]
