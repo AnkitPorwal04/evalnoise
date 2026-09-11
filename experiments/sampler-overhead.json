@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "sampler-overhead",
+  "seed": 7,
+  "repeats": 10,
+  "sample_interval_s": 0,
+  "tasks": [
+    {"id": "fixed-cpu", "image": "evalnoise-workloads:local", "command": ["python", "/opt/evalnoise/workload.py", "cpu-long"]}
+  ],
+  "profiles": [
+    {"id": "sampler-off", "cpus": 1, "memory_mb": 256, "timeout_s": 60, "concurrency": 1, "sample_interval_s": 0},
+    {"id": "sampler-on", "cpus": 1, "memory_mb": 256, "timeout_s": 60, "concurrency": 1, "sample_interval_s": 2}
+  ]
+}

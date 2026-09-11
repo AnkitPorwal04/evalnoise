@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "enforcement-probe",
+  "seed": 3,
+  "repeats": 1,
+  "sample_interval_s": 0,
+  "tasks": [
+    {"id": "placeholder", "image": "evalnoise-probe:local", "command": ["python", "/opt/probe/probe.py"]}
+  ],
+  "profiles": [
+    {"id": "unpinned", "cpus": 1, "memory_mb": 128, "timeout_s": 30},
+    {"id": "pinned", "cpus": 2, "memory_mb": 256, "timeout_s": 30, "cpuset_cpus": "0-1"}
+  ]
+}
