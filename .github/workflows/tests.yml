@@ -24,6 +24,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: docker build -t evalnoise-workloads:local workloads
+      - run: docker build -t evalnoise-verifier:local verifiers
       - run: python -m unittest discover -s tests -v
         env:
           EVALNOISE_DOCKER_TESTS: '1'
