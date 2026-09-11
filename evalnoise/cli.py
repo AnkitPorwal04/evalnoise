@@ -6,7 +6,10 @@ from pathlib import Path
 import sys
 
 from .config import ConfigError, load, plan
+from .coordination import CoordinationError
 from .docker import Docker, DockerError
+from .probe import run as probe_run
+from .recovery import RecoveryError, cleanup, diagnose
 from .report import generate
 from .runner import execute
 
@@ -23,12 +26,34 @@ def main(argv=None):
             command.add_argument("--trust-config", action="store_true", help="Acknowledge that configured images and commands are trusted code")
     report = commands.add_parser("report", help="Regenerate reports from persisted evidence without Docker")
     report.add_argument("directory", type=Path)
+    check = commands.add_parser("diagnose", help="Read-only recovery diagnosis for one run you own")
+    check.add_argument("directory", type=Path)
+    remove = commands.add_parser("cleanup", help="Remove only this run's own leftover containers")
+    remove.add_argument("directory", type=Path)
+    remove.add_argument("--confirm", action="store_true", help="Required acknowledgement; without it nothing is removed")
+    enforcement = commands.add_parser("probe", help="Preflight enforcement probe using a separate reviewed image")
+    enforcement.add_argument("config", type=Path)
+    enforcement.add_argument("--image", default="evalnoise-probe:local")
+    enforcement.add_argument("--output", type=Path, default=Path("runs"))
+    enforcement.add_argument("--trust-config", action="store_true", help="Acknowledge that the probe image is trusted code this command will execute")
     args = parser.parse_args(argv)
     try:
         if args.command == "doctor":
             print(json.dumps(Docker().doctor(), indent=2))
         elif args.command == "report":
             print(json.dumps(generate(args.directory), indent=2))
+        elif args.command == "diagnose":
+            print(json.dumps(diagnose(Docker(), args.directory), indent=2))
+        elif args.command == "cleanup":
+            print(json.dumps(cleanup(Docker(), args.directory, args.confirm), indent=2))
+        elif args.command == "probe":
+            if not args.trust_config:
+                raise ConfigError("The probe starts a configured image as trusted code. Review the "
+                                  "image, then pass --trust-config.")
+            experiment = load(args.config)
+            result = probe_run(Docker(), args.image, experiment.profiles, args.output)
+            print(json.dumps(result, indent=2))
+            return 0 if result["conclusive"] and result["enforced_as_requested"] else 2
         else:
             experiment = load(args.config)
             if args.command == "validate":
@@ -45,6 +70,6 @@ def main(argv=None):
                                   "report": str((directory / "report.html").resolve())}, indent=2))
                 return 0 if summary["status"] == "completed" else 2
         return 0
-    except (ConfigError, DockerError, OSError, ValueError, KeyError) as error:
+    except (ConfigError, CoordinationError, DockerError, RecoveryError, OSError, ValueError, KeyError) as error:
         print(f"evalnoise: {error}", file=sys.stderr)
         return 2
