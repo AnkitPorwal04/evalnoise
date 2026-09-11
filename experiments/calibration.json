@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "memory-calibration",
+  "seed": 42,
+  "repeats": 3,
+  "sample_interval_s": 0,
+  "tasks": [
+    {"id": "cpu", "image": "evalnoise-workloads:local", "command": ["python", "/opt/evalnoise/workload.py", "cpu"]},
+    {"id": "memory", "image": "evalnoise-workloads:local", "command": ["python", "/opt/evalnoise/workload.py", "memory"]},
+    {"id": "repository", "image": "evalnoise-workloads:local", "command": ["python", "/opt/evalnoise/workload.py", "repository"]}
+  ],
+  "profiles": [
+    {"id": "tight", "cpus": 1, "memory_mb": 48, "timeout_s": 15, "concurrency": 1},
+    {"id": "roomy", "cpus": 1, "memory_mb": 256, "timeout_s": 15, "concurrency": 1}
+  ]
+}

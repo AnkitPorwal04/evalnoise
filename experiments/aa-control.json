@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "identical-profile-control",
+  "seed": 19,
+  "repeats": 3,
+  "tasks": [
+    {"id": "cpu", "image": "evalnoise-workloads:local", "command": ["python", "/opt/evalnoise/workload.py", "cpu"]},
+    {"id": "memory", "image": "evalnoise-workloads:local", "command": ["python", "/opt/evalnoise/workload.py", "memory"]}
+  ],
+  "profiles": [
+    {"id": "control-a", "cpus": 1, "memory_mb": 256, "timeout_s": 15},
+    {"id": "control-b", "cpus": 1, "memory_mb": 256, "timeout_s": 15}
+  ]
+}
