@@ -4,9 +4,9 @@
 
 EvalNoise is a research-driven experiment runner for controlled resource-profile comparisons. It preserves the configuration, randomized schedule, image identity, container state, bounded logs, missing trials, and descriptive comparisons in an offline experiment notebook.
 
-**Status: v0.1 foundation, not a finished agent-evaluation platform.** The current fixtures are scripted calibration workloads. They validate measurement plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
+**Status: v0.2 measurement foundation with independent JSON-artifact verification, not a finished agent-evaluation platform.** The fixtures are scripted calibration workloads. They validate measurement plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
 
-Licensing has not been selected yet. This local scaffold is not presented as a licensed open-source release.
+Repository: [AnkitPorwal04/evalnoise](https://github.com/AnkitPorwal04/evalnoise). Licensing has not been selected yet; this is not presented as a licensed open-source release.
 
 ## Why This Exists
 
@@ -25,7 +25,9 @@ EvalNoise asks a narrower, auditable question first: **when we run the same trus
 - Atomic per-trial JSON and a manifest that preserves incomplete runs.
 - Optional raw Docker CLI samples, explicitly not peak-memory measurements.
 - Offline HTML, JSON summaries, and CSV exports with explicit denominators.
-- Unit tests, opt-in real Docker tests, and a proposed CI matrix.
+- Optional independent verifier containers with separate resource budgets and data-only artifact handoff.
+- Task/verifier content hashes, execution-versus-correctness outcomes, and interruption-safe verification checkpoints.
+- Unit tests, opt-in real Docker tests, and GitHub Actions across Python 3.11-3.14.
 
 ## Quick Start
 
@@ -57,6 +59,20 @@ python3 -m evalnoise report runs/<experiment-run-id>
 
 Optional installation: `python3 -m pip install -e .` exposes the `evalnoise` command. Runtime dependencies are standard-library only; installation uses setuptools as the build backend.
 
+## Independent Verification
+
+Build the separate trusted verifier image, then run the known-answer fixtures:
+
+```sh
+docker build -t evalnoise-workloads:local workloads
+docker build -t evalnoise-verifier:local verifiers
+python3 -m evalnoise run experiments/verified.json --trust-config
+```
+
+All three candidate programs exit successfully. Only the correct answer passes verification. The wrong answer and a candidate that prints its own positive verdict both fail the trusted check. This demonstrates an execution/correctness distinction, not an agent benchmark.
+
+Verifiers run sequentially **after each entire workload batch**, never beside measured workloads. A verifier crash, timeout, malformed response, or cleanup failure produces `verifier_error`, not an incorrect-answer verdict. Missing or invalid candidate output produces `artifact_error`. [Read the verifier contract](docs/verification.md) before implementing a task.
+
 ## Experiments And Interpretation
 
 `calibration.json` repeats three workloads under 48 MiB and 256 MiB memory ceilings. The memory fixture intentionally allocates more than 48 MiB. CPU hashing and a tiny repository test fixture provide additional execution checks. This is a positive control for memory pressure, not a representative coding benchmark.
@@ -65,7 +81,7 @@ Optional installation: `python3 -m pip install -e .` exposes the `evalnoise` com
 
 Profile batches run sequentially. Within a batch, `concurrency` controls the number of workers. A profile with concurrency one cannot produce a contention experiment by itself. Concurrent profiles also require enough tasks to fill their workers. Avoid unrelated host work and other EvalNoise processes during measurement; v0.1 does not acquire a daemon-wide experiment lock.
 
-The report's pass rate is clean passes divided by **recorded** trials, including recorded infrastructure failures and cancellations in that denominator. Missing trials are displayed separately. Paired deltas exclude missing/cancelled pairs. Neither quantity is a model score. Successful-duration medians can compare different survivor sets and must not be interpreted as unconditional speedups.
+The report's pass rate is clean final passes divided by **recorded** trials, including recorded infrastructure failures, verification errors, cancellations, and pending verification in that denominator. Missing trials are displayed separately. Paired deltas exclude missing, cancelled, and pending-verification pairs. Neither quantity is a model score. Successful-duration medians describe workloads only, excluding verifier time, and can compare different survivor sets; they are not unconditional speedups. Per-task rows distinguish exit-code and independently verified contracts.
 
 ## Documentation
 
@@ -74,6 +90,7 @@ The report's pass rate is clean passes divided by **recorded** trials, including
 - [Architecture and decisions](docs/architecture.md): execution flow, modules, and design tradeoffs.
 - [Experiment methodology](docs/methodology.md): controls, estimands, confounders, and interpretation.
 - [Data contract](docs/data-contract.md): configuration, artifacts, outcomes, and compatibility.
+- [Independent verification](docs/verification.md): protocol, trusted verifier authoring, lifecycle, and scope.
 - [Security and operations](docs/security.md): trust boundary, containment, cleanup, and sharing.
 - [Roadmap](docs/roadmap.md): milestone gates for the larger platform.
 - [Testing](docs/testing.md): verification commands and evidence requirements.
@@ -88,10 +105,10 @@ python3 -m compileall -q evalnoise
 EVALNOISE_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 ```
 
-The final command creates and removes real containers using the previously built image. CI definitions exist, but remote CI has not run until this project is placed in a repository with Actions enabled.
+The final command creates and removes real containers using both previously built images. Check [GitHub Actions](https://github.com/AnkitPorwal04/evalnoise/actions) for the result of the specific commit; local success is not proof of remote CI success.
 
 ## Current Limits
 
-No model/provider adapters, Harbor integration, independent verifier process, API proxy, distributed workers, signed artifacts, statistical confidence intervals, web control plane, or multi-tenant isolation yet. No retries or resume. CPU quotas are not dedicated CPUs. Host caches and other workloads are uncontrolled. CLI polling and optional sampling add overhead. Timeouts are best-effort host deadlines, not real-time guarantees. Local evidence can be edited and logs may contain secrets.
+No model/provider adapters, Harbor integration, repository/patch artifact transfer, API proxy, distributed workers, signed artifacts, statistical confidence intervals, web control plane, or multi-tenant isolation yet. Verifier input is a bounded JSON value, not an arbitrary filesystem or archive. No retries or resume. CPU quotas are not dedicated CPUs. Host caches and other workloads are uncontrolled. CLI polling and optional sampling add overhead. Timeouts are best-effort host deadlines, not real-time guarantees. Local evidence can be edited and logs may contain secrets.
 
-The intended next step is an independent task/verifier contract, followed by measured agent integration. A larger dashboard comes after those foundations, not instead of them.
+Next is measurement fidelity: engine identity, same-engine run coordination, enforcement probes, and recovery. Repository-artifact tasks and agent integration require additional design and tests. A larger dashboard comes after those foundations, not instead of them.
