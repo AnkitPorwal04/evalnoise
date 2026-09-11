@@ -34,8 +34,16 @@ class DockerIntegrationTests(unittest.TestCase):
 
     def test_memory_pressure_and_recorded_limits(self):
         result = self.run_mode("memory", memory=48)
-        self.assertEqual(result["status"], "oom_killed", result)
-        self.assertTrue(result["inspection"]["state"]["OOMKilled"])
+        state = result["inspection"]["state"]
+        # Engines may expose allocation failure or SIGKILL without an OOM flag.
+        # Require failure and preserve the distinction instead of inventing OOM evidence.
+        if state["OOMKilled"]:
+            self.assertEqual(result["status"], "oom_killed", result)
+        else:
+            self.assertEqual(result["status"], "workload_failed", result)
+            self.assertIn(state["ExitCode"], (1, 137), result)
+            if state["ExitCode"] == 1:
+                self.assertIn("MemoryError", result["logs"]["text"], result)
         resources = result["inspection"]["resources"]
         self.assertEqual(resources["Memory"], 48 * 1024**2)
         self.assertEqual(resources["MemorySwap"], resources["Memory"])
