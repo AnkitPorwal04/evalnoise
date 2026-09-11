@@ -63,6 +63,26 @@ class Profile:
     memory_mb: int
     timeout_s: float
     concurrency: int = 1
+    cpuset_cpus: str | None = None
+    sample_interval_s: float | None = None
+
+
+def cpuset(value):
+    """Expand a `--cpuset-cpus` mask into explicit indices, rejecting ambiguous forms."""
+    if not isinstance(value, str) or not re.fullmatch(r"\d{1,4}(-\d{1,4})?(,\d{1,4}(-\d{1,4})?)*", value):
+        raise ConfigError("cpuset_cpus must be a comma-separated list of indices or ascending ranges")
+    indices = []
+    for part in value.split(","):
+        start, _, end = part.partition("-")
+        low, high = int(start), int(end) if end else int(start)
+        if high < low:
+            raise ConfigError(f"cpuset_cpus range {part!r} is not ascending")
+        indices.extend(range(low, high + 1))
+    if len(set(indices)) != len(indices):
+        raise ConfigError("cpuset_cpus repeats a CPU index")
+    if len(indices) > 4096:
+        raise ConfigError("cpuset_cpus selects an implausible number of CPUs")
+    return tuple(indices)
 
 
 @dataclass(frozen=True)
@@ -123,12 +143,23 @@ def parse(value):
                           int(number(task.get("expected_exit", 0), "expected_exit", 0, 255, True)), verifier))
     profiles = []
     for profile in value["profiles"]:
-        keys(profile, ("id", "cpus", "memory_mb", "timeout_s"), ("concurrency",))
-        profiles.append(Profile(identifier(profile["id"]),
-                                number(profile["cpus"], "cpus", .1, 64),
+        keys(profile, ("id", "cpus", "memory_mb", "timeout_s"),
+             ("concurrency", "cpuset_cpus", "sample_interval_s"))
+        cpus = number(profile["cpus"], "cpus", .1, 64)
+        override = profile.get("sample_interval_s")
+        if override is not None:
+            override = number(override, "profile.sample_interval_s", 0, 60)
+            if 0 < override < 2:
+                raise ConfigError("Sampling must be disabled (0) or at least 2 seconds apart")
+        mask = profile.get("cpuset_cpus")
+        if mask is not None:
+            if len(cpuset(mask)) < math.ceil(cpus):
+                raise ConfigError("cpuset_cpus selects fewer CPUs than the requested cpus ceiling")
+        profiles.append(Profile(identifier(profile["id"]), cpus,
                                 int(number(profile["memory_mb"], "memory_mb", 16, 65536, True)),
                                 number(profile["timeout_s"], "timeout_s", .1, 3600),
-                                int(number(profile.get("concurrency", 1), "concurrency", 1, 16, True))))
+                                int(number(profile.get("concurrency", 1), "concurrency", 1, 16, True)),
+                                mask, override))
     for entries in (tasks, profiles):
         if len({entry.id for entry in entries}) != len(entries):
             raise ConfigError("Task IDs and profile IDs must each be unique")
