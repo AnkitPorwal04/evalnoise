@@ -30,7 +30,8 @@ class VerifiedDocker(FakeDocker):
         self.verdict, self.verifier_status, self.candidate = verdict, verifier_status, candidate
         self.created, self.artifacts = [], []
 
-    def create(self, name, *args, artifact=None):
+    def create(self, name, run_id=None, task=None, profile=None, *args, artifact=None):
+        super().create(name, run_id, task, profile)
         self.created.append(name)
         if artifact is not None:
             self.artifacts.append(artifact)
@@ -42,7 +43,7 @@ class VerifiedDocker(FakeDocker):
         state = dict(self.state)
         if name.endswith("-verify") and self.verifier_status:
             state.update(self.verifier_status)
-        return {"state": state}
+        return {**super().inspect(name), "state": state}
 
     def logs(self, name):
         if name.endswith("-verify"):
@@ -208,7 +209,7 @@ class VerificationLifecycleTests(unittest.TestCase):
             def inspect(self, name):
                 if name.endswith("-verify"):
                     stop.set()
-                    return {"state": {"Running": True, "Status": "running"}}
+                    return {**super().inspect(name), "state": {"Running": True, "Status": "running"}}
                 return super().inspect(name)
         backend = CancelVerifier()
         _, trials, _ = self.run_fake(backend, stop=stop)

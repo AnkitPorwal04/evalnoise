@@ -15,7 +15,7 @@ def contract_hash(task, images):
 
 def envelope(logs, key):
     """Accept exactly one protocol record among timestamp-prefixed Docker log lines."""
-    if key not in ("evalnoise_artifact", "evalnoise_verdict"):
+    if key not in ("evalnoise_artifact", "evalnoise_verdict", "evalnoise_probe"):
         raise ValueError("Unknown protocol record")
     if logs.get("truncated"):
         raise ValueError("Truncated logs cannot establish an artifact or verdict")
@@ -48,9 +48,9 @@ def envelope(logs, key):
     encoded = json.dumps(value, allow_nan=False, separators=(",", ":")).encode("utf-8")
     if len(encoded) > 8192:
         raise ValueError("Protocol payload exceeds 8192 bytes")
-    if key == "evalnoise_artifact":
+    if key in ("evalnoise_artifact", "evalnoise_probe"):
         if set(value) != {"version", "payload"}:
-            raise ValueError("Artifact requires version and payload only")
+            raise ValueError(f"{key} requires version and payload only")
     elif set(value) != {"version", "passed", "reason"} or type(value["passed"]) is not bool or not isinstance(value["reason"], str) or len(value["reason"]) > 1000:
         raise ValueError("Verdict requires version, boolean passed, and bounded reason")
     return value, encoded
