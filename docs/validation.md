@@ -1,4 +1,8 @@
-# Local Validation Record
+# Validation Record
+
+## M0 Baseline
+
+The following baseline observations describe v0.1. The v0.2 milestone record follows below; it does not retroactively change these experiments.
 
 ## Scope
 
@@ -32,4 +36,18 @@ Reports are served temporarily on loopback port 4177 for local inspection. The g
 
 Five read-only review passes covered scope, lifecycle, security, statistical reporting, and tests. Actionable findings led to collision-free trial IDs, escaped edited-manifest fields, structural missing-container checks, unexpected-error diagnostics, and additional cancellation/concurrency/denominator regressions. This was not an external security audit or statistical validation of a model benchmark.
 
-Remote GitHub Actions, Python versions other than the local interpreter, native-Linux hosts, rootless engines, hard-kill recovery, independent verifier isolation, exact resource telemetry, and model/provider adapters remain unverified or unimplemented as described in the roadmap. No claim of perfect reliability is made.
+At the M0 validation checkpoint, remote GitHub Actions, other Python versions, native-Linux hosts, independent verifiers, and the later roadmap items were not yet validated. No claim of perfect reliability was made.
+
+## M1 Independent Verification
+
+Version 0.2.0 passed 61 tests locally using the same Python 3.14.2 / ARM64 Docker Desktop environment: 55 unit/lifecycle/protocol/report tests and six real Docker test methods. The new Docker method exercises seven cases: correct answer, wrong answer, candidate-spoofed verdict, missing artifact, verifier crash, malformed verdict, and verifier timeout. Compilation checks also passed.
+
+Run `independent-verification-68965e334466` recorded all six planned trials. Correct answers passed twice; wrong answers and spoofed candidate verdicts each produced two `verification_failed` outcomes. All candidate processes exited successfully, demonstrating that successful execution alone no longer implies verified correctness. The fixture checks a known sum-of-squares answer, not an agent benchmark.
+
+Executed workload image config ID: `sha256:d940b4e35a9f2c854e2c2f80dcf750d3d0ffbe2a3cad7918e3e078c44d0323ce`. Trusted verifier image config ID: `sha256:8be9e75798cc1f0496724d6e3e882621da7c1213442abfaa1077da5fe458fc5b`. Both identities and task contract hashes are retained in the manifest. The experiment ran separately from Docker integration tests.
+
+Browser checks at 1440 x 1000 and 390 x 844 verified task-level outcomes, expandable evidence, no page-wide horizontal overflow, and no page errors. The report is available locally under the run directory, not published with the source.
+
+The baseline diagnostic commit `ecf5598` passed GitHub Actions run `34579741704`, including Python 3.11-3.14 unit jobs and Ubuntu Docker integration. An earlier memory-pressure check failed because the observed process failure lacked the expected OOM classification; the following run passed. The revised test accepts allocation failure without inventing an OOM flag and checks classification against the actual evidence. This is not a demonstrated root cause for the intermittency. M1 remote CI is pending publication at this documentation checkpoint.
+
+Remaining gaps include repository-file artifact transfer, hostile-code isolation, rootless enforcement validation, hard-kill recovery, exact resource telemetry, statistical inference, and model/provider adapters. See the roadmap for acceptance gates rather than treating this bounded milestone as the complete platform.
