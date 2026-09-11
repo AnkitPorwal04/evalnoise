@@ -1,6 +1,7 @@
 """Docker CLI boundary. Commands never pass through a host shell."""
 
 from datetime import datetime
+import base64
 import json
 import platform
 import subprocess
@@ -47,7 +48,12 @@ class Docker:
                 "os": info["Os"], "architecture": info["Architecture"],
                 "variant": info.get("Variant"), "created": info.get("Created")}
 
-    def create(self, name, run_id, task, profile, image, seed):
+    def create(self, name, run_id, task, profile, image, seed, artifact=None):
+        extra = []
+        if artifact is not None:
+            if len(artifact) > 8192:
+                raise DockerError("Verifier artifact exceeds 8192 bytes")
+            extra = ["--env", "EVALNOISE_ARTIFACT_B64=" + base64.b64encode(artifact).decode("ascii")]
         return self.call([
             "create", "--name", name, "--label", f"io.evalnoise.run={run_id}", "--pull", "never",
             "--init", "--network", "none", "--read-only", "--cap-drop", "ALL",
@@ -56,7 +62,7 @@ class Docker:
             "--log-driver", "local", "--log-opt", "max-size=1m", "--log-opt", "max-file=2",
             "--cpus", str(profile.cpus), "--memory", f"{profile.memory_mb}m",
             "--memory-swap", f"{profile.memory_mb}m", "--env", f"EVALNOISE_SEED={seed}",
-            "--entrypoint", task.command[0], image["id"], *task.command[1:]
+            *extra, "--entrypoint", task.command[0], image["id"], *task.command[1:]
         ]).strip()
 
     def inspect(self, name):
@@ -73,8 +79,10 @@ class Docker:
 
     def logs(self, name):
         # Docker stores bounded rotating logs; publication truncates further.
-        output = self.call(["logs", "--timestamps", "--tail", "2000", name], merge=True)
-        return {"text": output[-262144:], "truncated": len(output) > 262144,
+        output = self.call(["logs", "--timestamps", "--tail", "2001", name], merge=True)
+        lines = output.splitlines(keepends=True)
+        retained = "".join(lines[-2000:])
+        return {"text": retained[-262144:], "truncated": len(lines) > 2000 or len(retained) > 262144,
                 "scope": "Last 2000 lines, at most 262144 characters; stdout then stderr, not interleaved. Engine rotation also applies."}
 
     def remove(self, name):
