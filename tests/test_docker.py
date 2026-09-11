@@ -34,7 +34,7 @@ class DockerIntegrationTests(unittest.TestCase):
 
     def test_memory_pressure_and_recorded_limits(self):
         result = self.run_mode("memory", memory=48)
-        self.assertEqual(result["status"], "oom_killed")
+        self.assertEqual(result["status"], "oom_killed", result)
         self.assertTrue(result["inspection"]["state"]["OOMKilled"])
         resources = result["inspection"]["resources"]
         self.assertEqual(resources["Memory"], 48 * 1024**2)
