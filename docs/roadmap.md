@@ -14,11 +14,26 @@ Independent trusted verifier containers, bounded JSON handoff, task/image/verifi
 
 Gate for this slice: verifier failure is neither an incorrect answer nor a pass; candidate-emitted verdicts cannot replace the trusted check; fixtures exercise real separate containers; inconsistent task/verifier hashes refuse report reconstruction. Cross-run comparisons and adversarial-code isolation are not delivered.
 
-## M2: Measurement Fidelity - Next
+## M2: Measurement Fidelity - Gate Passed
 
-Streaming raw Engine/cgroup telemetry, throttling counters, resource-enforcement probes, explicit Docker endpoint identity, host/VM metadata, same-engine run coordination, crash recovery, and optional affinity policies. Quantify sampler-on versus sampler-off overhead before enabling it by default.
+Implemented in v0.3: pinned Docker endpoint identity and daemon ID, streaming raw Engine/cgroup telemetry over a local Unix socket with bounded frames/samples/bytes and cancel-before-cleanup, raw throttling counters with nullable derived deltas and a cgroup availability map, a request-echo enforcement audit before every workload and verifier start, an optional reviewed in-container cgroup probe, optional validated CPU affinity, advisory per-daemon run coordination, and read-only diagnosis with ownership-checked cleanup.
 
-Gate: sampled versus exact/available metrics clearly distinguished; unsupported fields remain null; enforcement probes catch deliberately unsupported setups; no orphan cleanup crosses run ownership; interference tests demonstrate batch/concurrency semantics.
+Gate checklist, each item backed by a named run or test in [the validation log](validation.md):
+
+- [x] Sampled versus available metrics distinguished; retention semantics documented in the report
+- [x] Unsupported cgroup fields remain null and are listed, never zero
+- [x] Enforcement audit refuses a rewritten limit before the container starts
+- [x] Probe reports `inconclusive` rather than a false pass without cgroup v2; `probe-3e9cb31d8dae` confirmed a requested `0-1` mask through `cpuset.cpus.effective` with 2 online CPUs
+- [x] Cleanup crosses no run ownership and holds the engine lock while it validates and removes
+- [x] Telemetry is opt-in and its faults never change a workload outcome; both the stream reader and the CLI snapshot sampler close under a bound and detach rather than mutating evidence late
+- [x] Hard-kill recovery: a `SIGKILL`ed run leaves a diagnosable owned orphan, `cleanup --confirm` removes exactly that container ID, and missing trials stay missing
+- [x] A concurrent second run against the same engine is refused even when writing to a different output directory
+- [x] Interference tests demonstrating batch/concurrency semantics under real CPU load: within-profile trials overlap, profile batches do not
+- [x] Sampler-on versus sampler-off overhead contrast recorded as `sampler-overhead-e60d93977bd0`
+
+The overhead item is recorded as a **descriptive contrast, not a measurement of overhead**. The observed medians differ by less than this harness can resolve and the sampled arm is nominally the faster of the two, so no direction or magnitude is established and no statistical claim is attached. **Sampling therefore stays opt-in and off by default**, and that default is a deliberate consequence of the evidence rather than a pending task.
+
+Not in scope for M2: remote-endpoint streaming, auto-resume after a crash, cross-run telemetry aggregation, any CPU-percentage or peak-memory figure, and any inferential claim about sampler cost.
 
 ## M3: Agent And Benchmark Integration
 
