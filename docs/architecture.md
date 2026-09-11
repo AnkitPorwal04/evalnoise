@@ -16,6 +16,10 @@ Image IDs are resolved once before execution. Each task/repetition pair uses the
 ## Modules
 
 - `config.py`: strict parsing, ranges, configuration hashing, and schedule generation.
+- `endpoint.py`: endpoint resolution and pinning, Engine API negotiation, bounded cancel-safe stats streaming, cgroup field availability.
+- `coordination.py`: advisory per-daemon engine lock and orphan refusal.
+- `recovery.py`: read-only diagnosis and ownership-checked cleanup.
+- `probe.py`: optional preflight enforcement probe orchestration.
 - `docker.py`: argv-only Docker boundary, preflight, immutable image resolution, hardened creation, inspection, optional sampling, logs, cleanup, outcome classification.
 - `runner.py`: lifecycle ownership, batch scheduling, cancellation, and experiment artifacts.
 - `verification.py`: bounded artifact/verdict parsing and immutable task contract hashes.
@@ -45,7 +49,25 @@ Accepted. Human-readable tags are allowed in input for convenience but are resol
 
 ## ADR 006: Sampling Disabled By Default
 
-Accepted. CLI stats have collection overhead and miss short-lived peaks. Optional samples are raw observations with elapsed and collection time, not peak memory, exact CPU quota usage, or throttling counters. A streaming Engine API sampler is future work and must support explicit Docker endpoint resolution rather than assuming a socket path.
+Accepted, and still true in v0.3 because the overhead has not been measured. Samples are raw observations, not peak memory, exact CPU quota usage, or a CPU-percentage figure. Superseded in mechanism by ADR 009.
+
+## ADR 009: Pinned Endpoint, Local-Socket Streaming
+
+Accepted for v0.3. The endpoint is resolved once using the documented CLI precedence (`DOCKER_CONTEXT` over `DOCKER_HOST` over the selected context over the default socket) and then pinned onto every command. A local Unix socket is pinned by explicit `--host`, including one derived from a context, so a later `docker context use` cannot leave the CLI and the telemetry socket on different engines. `DOCKER_CONTEXT` and `DOCKER_HOST` are removed from the child environment, and the environment is snapshotted at construction so later mutation cannot redirect a run.
+
+A remote engine is supported through an explicit `DOCKER_HOST`, which is a literal address. A remote *context* is refused for measurement: a context is a mutable name that could be repointed between any two calls, and revalidating before every operation would double the command count for no measurement benefit. A missing default socket is an error, not an endless fallback.
+
+Streaming uses `GET /containers/{id}/stats?stream=true` on the pinned socket, at the API version the daemon itself advertises, never below its reported minimum or below the floor this code was written against. Frames, retained samples, and total bytes are bounded on received data before any retention filter. The reader owns its `HTTPResponse`; a cancelling thread only shuts the socket down, because the response's buffered state is not thread-safe. The stream is closed before container removal, so telemetry can never cause a cleanup failure, and a telemetry fault never changes a workload outcome.
+
+## ADR 010: Advisory Coordination Keyed By Daemon ID
+
+Accepted for v0.3, superseding the "not mutually excluded yet" note in ADR 003 for cooperating processes. The key is the daemon `ID`, not a socket path, and the lock file lives outside every output directory, so two runs writing to different `--output` paths still collide. The lock is acquired before any run directory exists and released only after the final manifest write; orphan containers are rechecked while it is held. The kernel releases it if the holder dies, so there is no stale-PID reaping.
+
+This is cooperation between EvalNoise processes for one local user against one daemon. It is not a distributed lock and does not exclude other users, other tools, or general host load.
+
+## ADR 011: Diagnose And Clean Up Separately, Never Resume
+
+Accepted for v0.3. Diagnosis is read-only and fails closed on a manifest whose `run_id`, configuration, or schedule is not self-consistent. Container existence is established structurally through `docker ps` with an exact name filter; an outage or unreadable response is an error, never "absent". Cleanup holds the engine lock across validation and removal, requires name, run label, engine label, and exact-stage image identity to agree, checks every candidate before removing any, and removes by resolved full container ID so a name cannot be re-pointed between check and delete. Neither command rewrites a trial status, a verdict, or the manifest status, and there is no automatic resume.
 
 ## ADR 007: Independent Verification After The Workload Batch
 
