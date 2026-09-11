@@ -19,6 +19,15 @@ def main():
         expected = hashlib.sha256(data).hexdigest()
         for _ in range(15000):
             assert hashlib.sha256(data).hexdigest() == expected
+    elif mode == "cpu-long":
+        # Fixed iteration count, not a sleep: roughly 3.7 s of real hashing on one CPU.
+        # The digest is a deterministic known answer, so a truncated run cannot pass.
+        digest = hashlib.sha256(b"evalnoise-cpu-long").digest()
+        for _ in range(12_000_000):
+            digest = hashlib.sha256(digest).digest()
+        expected = "75b6ae6d175af27e5b399c236f40547e53dd40643028aadd4ebc784e66587d7d"
+        if digest.hex() != expected:
+            raise ValueError(f"cpu-long produced {digest.hex()}, not the known answer")
     elif mode == "memory":
         blocks = []
         for _ in range(96):
