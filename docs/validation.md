@@ -112,8 +112,14 @@ The probe reads a separate reviewed image's own cgroup files. It shows the limit
 
 The regenerated report was then opened in a browser at `http://127.0.0.1:4177/sampler-overhead-e60d93977bd0/report.html` and inspected at two viewports, 1440 px desktop and 390 px mobile. The measurement fidelity section rendered at both widths with no horizontal overflow, no clipped table content, and no browser console errors. This is a visual check of one generated report on one browser engine; it is not cross-browser, accessibility, or print-layout validation.
 
+### Remote CI
+
+The published M2 commit `e8ab031` passed GitHub Actions run [`34594917203`](https://github.com/AnkitPorwal04/evalnoise/actions/runs/34594917203) on all five jobs: Python 3.11-3.14 unit jobs and the Ubuntu Docker job. The Docker job built all three images — `evalnoise-workloads:local`, `evalnoise-verifier:local`, and `evalnoise-probe:local` — and ran **199 tests in 57.9 s with no skips and no failures**. The four unit jobs each ran the same 199 tests with 16 skipped, as expected without `EVALNOISE_DOCKER_TESTS=1`. The run's logs contain zero `threading.excepthook` invocations and zero thread tracebacks.
+
+This is a single remote observation on GitHub-hosted amd64 runners, so it confirms the suite is portable off this workstation but is not repeated evidence across hosts, nor a claim about the intermittency discussed above. Remote runners are a different kernel, engine version, and cgroup driver than the macOS Docker Desktop VM used for the fidelity records, and the timing figures in this document come from the local host, not from CI. The workflow also emits a non-blocking warning that `actions/checkout@v4` and `actions/setup-python@v5` target the deprecated Node.js 20 and are forced onto Node.js 24; no job failed because of it and no action was pinned or upgraded in response.
+
 ### Remaining Gaps
 
 An exited container `evalnoise-e0a8eb826040-stream` from an earlier aborted session predates this work and was left in place: its run directory no longer exists, so no manifest can authorise the ownership-checked cleanup path, and removing it by hand would be exactly the unscoped sweep this project refuses. Beyond that, an engine query after testing found no EvalNoise-labelled containers from any run recorded here.
 
-Still not validated: native-Linux and rootless hosts, remote CI for v0.3, repeated overhead records across hosts or intervals, any statistical characterisation of sampler cost, interference from *other* tenants sharing the daemon, hostile-code isolation, repository-file artifact transfer, and browser rendering beyond the single engine and two viewports recorded above. No claim of perfect reliability is made.
+Still not validated: native-Linux and rootless hosts, repeated overhead records across hosts or intervals, any statistical characterisation of sampler cost, interference from *other* tenants sharing the daemon, hostile-code isolation, repository-file artifact transfer, and browser rendering beyond the single engine and two viewports recorded above. No claim of perfect reliability is made.
