@@ -24,7 +24,22 @@ Logs and stdout can contain secrets. Exported reports include bounded logs and c
 
 SIGINT and SIGTERM request cooperative cancellation. Running containers are killed and evidence/cleanup is attempted. Docker CLI timeouts do not guarantee immediate daemon response. Cleanup failure stops later batches and records the affected container name.
 
-After SIGKILL, host failure, or daemon outage, inspect only the run you own:
+v0.3 adds telemetry and recovery surface worth stating plainly. Raw Engine telemetry connects to a local Docker socket, which is privileged access to the daemon; the runner only reads container stats over it and never mounts it into a container. The recorded endpoint keeps a `skip_tls_verify` boolean but never certificate paths, key paths, or TLS material. A remote context is refused for measurement because a context is a mutable name; use an explicit `DOCKER_HOST`. `DOCKER_CONTEXT` and `DOCKER_HOST` are stripped from child processes so the pinned endpoint cannot be overridden mid-run.
+
+A single advisory lock per daemon ID keeps cooperating EvalNoise runs from overlapping on one engine, and running EvalNoise containers from another run refuse a start. This is cooperation between processes of one local user against one daemon. It is not a distributed lock, not a security control, and it does not exclude other users, other tools, or general host load.
+
+`evalnoise probe` starts a configured image as trusted code and therefore requires `--trust-config` like `run`. It is not a read-only command.
+
+After SIGKILL, host failure, or daemon outage, prefer the built-in commands, which refuse anything this run does not own:
+
+```sh
+python3 -m evalnoise diagnose runs/<experiment-run-id>
+python3 -m evalnoise cleanup  runs/<experiment-run-id> --confirm
+```
+
+Diagnosis writes nothing. Cleanup holds the engine lock while it validates and removes, requires the container name, run label, engine label, and exact-stage image identity to agree, checks every candidate before removing any, and removes by resolved full container ID. It refuses entirely while any coordinator is live, including a still-running instance of the same run. It never edits trial statuses, verdicts, or the manifest status, and there is no automatic resume.
+
+To inspect manually instead, still restrict yourself to the run you own:
 
 ```sh
 docker ps -a --filter label=io.evalnoise.run=<run-id>

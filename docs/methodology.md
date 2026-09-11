@@ -2,6 +2,8 @@
 
 ## Define The Question Before Running
 
+v0.3 telemetry does not change any outcome contract. Samples are raw engine counters, retained by comparing the daemon's own sample timestamps against the configured interval; the daemon controls the cadence, and nothing is interpolated or resampled. Reported deltas are first-to-last differences of raw counters between usable samples, not peaks, not exact quota accounting, and not evidence of a CPU reservation. A counter that does not exist on the observed cgroup version is null, never zero, so a null must not be read as "no throttling". The enforcement audit and the optional probe establish which limits the engine applied, not that the scheduler behaved correctly or that the host was otherwise idle. Sampler overhead has not been measured, so any comparison between a sampled and an unsampled profile is confounded until that record exists.
+
 Specify the workload population, treatment settings, outcome contract, repetition unit, timing scope, and exclusions. The population remains the fixed configured scripted suite. Exit-only tasks require the expected process exit without an observed OOM event. Optional v0.2 verified tasks additionally require a valid positive verdict from a separately executed trusted verifier. Neither contract establishes LLM capability or general correctness beyond its configured checks.
 
 ## Controls
