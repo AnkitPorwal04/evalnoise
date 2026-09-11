@@ -3,26 +3,114 @@
 from datetime import datetime
 import base64
 import json
+import os
 import platform
 import subprocess
+
+from . import endpoint as endpoints
+from .config import ConfigError, cpuset
+
+
+ECHO_FIELDS = ("NanoCpus", "CpuPeriod", "CpuQuota", "CpusetCpus", "CpusetMems", "Memory",
+               "MemorySwap", "MemorySwappiness", "MemoryReservation", "PidsLimit", "OomKillDisable",
+               "NetworkMode", "ReadonlyRootfs", "CapDrop", "SecurityOpt")
 
 
 class DockerError(RuntimeError):
     pass
 
 
+class EnforcementError(DockerError):
+    pass
+
+
+def affinity_mismatch(requested, observed):
+    """`0-1` and `0,1` are the same mask, so compare parsed sets. An echo that cannot be
+    parsed is a mismatch, never an assumed match."""
+    if not isinstance(observed, str):
+        return {"field": "CpusetCpus", "requested": requested or "",
+                "observed": observed, "reason": "engine echoed a non-string CPU mask"}
+    if not requested:
+        if observed.strip():
+            return {"field": "CpusetCpus", "requested": "", "observed": observed,
+                    "reason": "engine applied a CPU mask that was not requested"}
+        return None
+    if not observed.strip():
+        return {"field": "CpusetCpus", "requested": requested, "observed": observed,
+                "reason": "engine recorded no CPU mask"}
+    try:
+        wanted, echoed = set(cpuset(requested)), set(cpuset(observed))
+    except ConfigError as error:
+        return {"field": "CpusetCpus", "requested": requested, "observed": observed,
+                "reason": f"unreadable CPU mask: {error}"}
+    if wanted != echoed:
+        return {"field": "CpusetCpus", "requested": requested, "observed": observed,
+                "reason": "engine recorded a different set of CPUs"}
+    return None
+
+
+def audit(profile, resources, pids_limit=128):
+    requested_mask = getattr(profile, "cpuset_cpus", None)
+    expected = {"NanoCpus": round(profile.cpus * 10**9),
+                "Memory": profile.memory_mb * 1024**2,
+                "MemorySwap": profile.memory_mb * 1024**2,
+                "PidsLimit": pids_limit, "NetworkMode": "none", "ReadonlyRootfs": True}
+    mismatches = [{"field": field, "requested": value, "observed": resources.get(field)}
+                  for field, value in expected.items() if resources.get(field) != value]
+    affinity = affinity_mismatch(requested_mask, resources.get("CpusetCpus"))
+    if affinity:
+        mismatches.append(affinity)
+    expected["CpusetCpus"] = requested_mask or ""
+    return {"requested": expected, "observed": {k: resources.get(k) for k in ECHO_FIELDS},
+            "mismatches": mismatches, "enforced_as_requested": not mismatches,
+            "scope": ("HostConfig echo of what this engine recorded for the request. It is not an "
+                      "independent controller audit and implies no dedicated CPU reservation.")}
+
+
 class Docker:
+    def __init__(self, endpoint=None):
+        self.endpoint = endpoint
+        self.telemetry = {"telemetry_source": "cli_snapshot", "reason": "Endpoint not resolved yet"}
+        self.engine_identity = {}
+        self.owner_token = None
+        self.environment = dict(os.environ)
+
     def call(self, args, timeout=20, merge=False):
+        flags = endpoints.cli_flags(self.endpoint) if self.endpoint else []
+        environment = (endpoints.child_environment(self.environment, self.endpoint)
+                       if self.endpoint else self.environment)
         try:
-            result = subprocess.run(["docker", *args], capture_output=True, text=True,
-                                    errors="replace", timeout=timeout)
+            result = subprocess.run(["docker", *flags, *args], capture_output=True, text=True,
+                                    errors="replace", timeout=timeout, env=environment)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise DockerError(f"docker {args[0]} unavailable or timed out: {error}") from error
         if result.returncode:
             raise DockerError(f"docker {args[0]} failed: {result.stderr[-2000:].strip()}")
         return result.stdout + result.stderr if merge else result.stdout
 
+    def _ambient(self, args, timeout=20):
+        try:
+            result = subprocess.run(["docker", *args], capture_output=True, text=True,
+                                    errors="replace", timeout=timeout, env=self.environment)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise DockerError(f"docker {args[0]} unavailable or timed out: {error}") from error
+        if result.returncode:
+            raise DockerError(f"docker {args[0]} failed: {result.stderr[-2000:].strip()}")
+        return result.stdout
+
+    def pin(self):
+        if self.endpoint is None:
+            self.endpoint = endpoints.resolve(self._ambient, self.environment)
+        return endpoints.require_stable_endpoint(self.endpoint)
+
+    def identity(self):
+        self.pin()
+        info = json.loads(self.call(["info", "--format", "{{json .}}"], 10))
+        return {"id": info.get("ID"), "server_version": info.get("ServerVersion"),
+                "cgroup_version": info.get("CgroupVersion"), "ncpu": info.get("NCPU")}
+
     def doctor(self):
+        self.pin()
         version = json.loads(self.call(["version", "--format", "{{json .}}"], 10))
         info = json.loads(self.call(["info", "--format", "{{json .}}"], 10))
         if info.get("OSType") != "linux":
@@ -32,9 +120,17 @@ class Docker:
         warnings = info.get("Warnings") or []
         if any("swap limit" in warning.lower() for warning in warnings):
             raise DockerError("Engine reports unsupported swap limits; refusing a no-swap experiment")
+        if not info.get("ID"):
+            raise DockerError("Engine did not report a daemon ID; run coordination cannot be keyed")
+        server = version.get("Server") or {}
+        self.telemetry = endpoints.negotiate(self.endpoint, server.get("ApiVersion"),
+                                             server.get("MinAPIVersion"))
         return {"client_platform": platform.platform(), "client_machine": platform.machine(),
                 "python": platform.python_version(), "docker_client": version["Client"]["Version"],
                 "docker_server": version["Server"]["Version"],
+                "endpoint": self.endpoint, "telemetry": self.telemetry,
+                "telemetry_support": endpoints.availability(info.get("CgroupVersion")),
+                "engine_identity": self._remember(info),
                 "engine": {key: info.get(key) for key in
                            ("OSType", "Architecture", "OperatingSystem", "KernelVersion", "NCPU",
                              "MemTotal", "CgroupVersion", "CgroupDriver", "Driver", "SecurityOptions", "Warnings")},
@@ -54,6 +150,13 @@ class Docker:
             if len(artifact) > 8192:
                 raise DockerError("Verifier artifact exceeds 8192 bytes")
             extra = ["--env", "EVALNOISE_ARTIFACT_B64=" + base64.b64encode(artifact).decode("ascii")]
+        engine_id = (self.engine_identity or {}).get("id")
+        if engine_id:
+            extra += ["--label", f"io.evalnoise.engine={engine_id}"]
+        if self.owner_token:
+            extra += ["--label", f"io.evalnoise.owner={self.owner_token}"]
+        if getattr(profile, "cpuset_cpus", None):
+            extra += ["--cpuset-cpus", profile.cpuset_cpus]
         return self.call([
             "create", "--name", name, "--label", f"io.evalnoise.run={run_id}", "--pull", "never",
             "--init", "--network", "none", "--read-only", "--cap-drop", "ALL",
@@ -65,17 +168,32 @@ class Docker:
             *extra, "--entrypoint", task.command[0], image["id"], *task.command[1:]
         ]).strip()
 
+    def _remember(self, info):
+        self.engine_identity = {"id": info.get("ID"), "name": info.get("Name"),
+                                "server_version": info.get("ServerVersion"),
+                                "cgroup_version": info.get("CgroupVersion"), "ncpu": info.get("NCPU")}
+        return self.engine_identity
+
     def inspect(self, name):
         info = json.loads(self.call(["inspect", name]))[0]
         host = info["HostConfig"]
         return {"state": info["State"], "image": info["Image"],
-                "resources": {key: host.get(key) for key in
-                              ("NanoCpus", "Memory", "MemorySwap", "PidsLimit", "NetworkMode",
-                               "ReadonlyRootfs")}}
+                "container_id": info.get("Id"),
+                "labels": (info.get("Config") or {}).get("Labels") or {},
+                "resources": {key: host.get(key) for key in ECHO_FIELDS}}
 
     def stats(self, name):
         output = self.call(["stats", "--no-stream", "--format", "{{json .}}", name], 5)
         return json.loads(output)
+
+    def stream(self, container_id, interval, started):
+        if self.telemetry.get("telemetry_source") != "engine_stream":
+            return None
+        if self.endpoint is None:
+            raise DockerError("Streaming requires a pinned Docker endpoint")
+        return endpoints.StatsStream(self.endpoint["socket_path"],
+                                     self.telemetry["api_version_pinned"],
+                                     container_id, interval, started).start()
 
     def logs(self, name):
         # Docker stores bounded rotating logs; publication truncates further.
