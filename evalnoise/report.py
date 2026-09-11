@@ -11,6 +11,80 @@ from .storage import write_json
 from .verification import contract_hash
 
 
+def _total(values):
+    present = [value for value in values if type(value) is int]
+    return sum(present) if present else None
+
+
+def fidelity(manifest, trials):
+    """M2 evidence. Absent measurements stay null; they are never reported as zero."""
+    configured = manifest["config"].get("sample_interval_s", 0)
+    rows = []
+    for profile in manifest["config"]["profiles"]:
+        override = profile.get("sample_interval_s")
+        effective = configured if override is None else override
+        selected = [trial for trial in trials if trial["profile"] == profile["id"]]
+        sampled = [trial for trial in selected if trial.get("telemetry_meta")]
+        metas = [trial["telemetry_meta"] for trial in sampled]
+        audited = [trial for trial in selected if trial.get("resource_audit")]
+        rows.append({
+            "profile": profile["id"],
+            "configured_sample_interval_s": configured,
+            "profile_sample_interval_s": override,
+            "effective_sample_interval_s": effective,
+            "sampling_enabled": bool(effective),
+            "cpuset_cpus": profile.get("cpuset_cpus"),
+            "affinity_configured": profile.get("cpuset_cpus") is not None,
+            "telemetry_sources": sorted({trial.get("telemetry_source") or "not_recorded"
+                                         for trial in selected}) or None,
+            "trials_with_telemetry": len(sampled),
+            "samples_received": _total([meta.get("samples_received") for meta in metas]),
+            "samples_retained": _total([meta.get("samples_retained") for meta in metas]),
+            "telemetry_error_trials": len([t for t in selected if t.get("telemetry_errors")]) if selected else None,
+            "truncated_trials": len([m for m in metas if m.get("truncated")]) if metas else None,
+            "leaked_reader_threads": len([m for m in metas if m.get("thread_leaked")]) if metas else None,
+            "resource_audited_trials": len(audited) if selected else None,
+            "enforcement_mismatch_trials": len(
+                [t for t in audited if not t["resource_audit"].get("enforced_as_requested")]) if audited else None,
+        })
+    per_trial = []
+    for trial in trials:
+        meta = trial.get("telemetry_meta") or {}
+        derived = meta.get("derived") or {}
+        per_trial.append({
+            "id": trial["id"], "profile": trial["profile"],
+            "telemetry_source": trial.get("telemetry_source") or "not_recorded",
+            "samples_received": meta.get("samples_received"),
+            "samples_retained": meta.get("samples_retained"),
+            "truncated": meta.get("truncated"), "thread_leaked": meta.get("thread_leaked"),
+            "telemetry_errors": len(trial.get("telemetry_errors") or []) if "telemetry_errors" in trial else None,
+            "throttled_periods_delta": derived.get("throttled_periods_delta"),
+            "periods_delta": derived.get("periods_delta"),
+            "throttled_fraction": derived.get("throttled_fraction"),
+            "cpu_total_ns_delta": derived.get("cpu_total_ns_delta"),
+            "memory_usage_max_observed": derived.get("memory_usage_max_observed"),
+        })
+    final = manifest.get("engine_identity_final")
+    warning = None
+    if final and not final.get("stable"):
+        warning = (f"Engine identity was not stable across this run: expected {final.get('expected')!r}, "
+                   f"observed {final.get('observed')!r}. {final.get('error') or final.get('note') or ''}").strip()
+    endpoint = (manifest.get("environment") or {}).get("endpoint") or {}
+    telemetry = (manifest.get("environment") or {}).get("telemetry") or {}
+    return {"profiles": rows, "trials": per_trial,
+            "engine_identity_warning": warning,
+            "engine_identity_final": final,
+            "endpoint_source": endpoint.get("source"), "endpoint_scheme": endpoint.get("scheme"),
+            "telemetry_source": telemetry.get("telemetry_source"),
+            "telemetry_unavailable_reason": telemetry.get("reason"),
+            "api_version_pinned": telemetry.get("api_version_pinned"),
+            "telemetry_support": (manifest.get("environment") or {}).get("telemetry_support"),
+            "scope": ("Sampled observations of raw engine counters. Retention filters engine "
+                      "read timestamps; it does not set the daemon's cadence. These are not peak "
+                      "values, not exact quota accounting, and not a CPU reservation claim. "
+                      "Null means not measured, never zero.")}
+
+
 def summarize(manifest, trials):
     if any(t.get("verifier") for t in manifest["config"]["tasks"]) and "task_contracts" not in manifest:
         raise ValueError("Verifier-enabled evidence requires task contract hashes")
@@ -61,7 +135,7 @@ def summarize(manifest, trials):
                       "outcomes": dict(Counter(t["status"] for t in trials if t["task"] == task["id"] and t["profile"] == profile["id"]))}
                      for task in manifest["config"]["tasks"] for profile in profiles]
     return {"run_id": manifest["run_id"], "status": manifest["status"], "profiles": profiles,
-            "task_outcomes": task_outcomes,
+            "task_outcomes": task_outcomes, "fidelity": fidelity(manifest, trials),
             "comparisons": pairs, "recorded_trials": len(trials), "planned_trials": len(planned),
             "interpretation": "Descriptive results for this fixed workload suite, not independent population trials. No causal or statistical significance claim.",
             "latency_scope": "Container start-to-finish duration for successful trials only. Failed and missing durations are not zero. Profiles may have different successful task sets; comparing these medians alone does not establish a speedup."}
@@ -79,6 +153,7 @@ def generate(directory):
         writer.writeheader()
         writer.writerows(trials)
     esc = lambda value: html.escape(str(value), quote=True)
+    cell = lambda value: "Not measured" if value is None else esc(value)
     rows = []
     for profile in summary["profiles"]:
         rate = profile["pass_rate_recorded"]
@@ -99,6 +174,28 @@ def generate(directory):
                       f"<p>Container: {esc(t['container_name'])}</p>"
                       f"<pre>{esc(json.dumps({k: v for k, v in t.items() if k != 'logs'}, indent=2))}</pre>"
                       f"<h3>Bounded workload logs</h3><pre>{esc(t.get('logs', {}).get('text', 'No logs captured'))}</pre></details>" for t in trials)
+    grade = summary["fidelity"]
+    fidelity_rows = "".join(
+        f"<tr><th>{esc(row['profile'])}</th>"
+        f"<td>{'Enabled' if row['sampling_enabled'] else 'Disabled'} at {esc(row['effective_sample_interval_s'])} s"
+        f"{' (profile override)' if row['profile_sample_interval_s'] is not None else ''}</td>"
+        f"<td>{'No affinity mask' if row['cpuset_cpus'] is None else esc(row['cpuset_cpus'])}</td>"
+        f"<td>{esc(', '.join(row['telemetry_sources'] or [])) or 'Not measured'}</td>"
+        f"<td>{cell(row['samples_received'])} / {cell(row['samples_retained'])}</td>"
+        f"<td>{cell(row['telemetry_error_trials'])} err, {cell(row['truncated_trials'])} trunc, {cell(row['leaked_reader_threads'])} leaked</td>"
+        f"<td>{cell(row['resource_audited_trials'])} audited, {cell(row['enforcement_mismatch_trials'])} mismatched</td></tr>"
+        for row in grade["profiles"])
+    fidelity_trials = "".join(
+        f"<tr><th>{esc(row['id'])}</th><td>{esc(row['telemetry_source'])}</td>"
+        f"<td>{cell(row['samples_received'])} / {cell(row['samples_retained'])}</td>"
+        f"<td>{cell(row['telemetry_errors'])}</td>"
+        f"<td>{cell(row['truncated'])} / {cell(row['thread_leaked'])}</td>"
+        f"<td>{cell(row['throttled_periods_delta'])} of {cell(row['periods_delta'])}</td>"
+        f"<td>{cell(row['cpu_total_ns_delta'])}</td><td>{cell(row['memory_usage_max_observed'])}</td></tr>"
+        for row in grade["trials"])
+    identity_banner = (f"<p class=\"notice\"><strong>Engine identity warning.</strong> "
+                       f"{esc(grade['engine_identity_warning'])}</p>"
+                       if grade["engine_identity_warning"] else "")
     page = f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <title>EvalNoise / {esc(manifest['config']['name'])}</title><style>
@@ -109,9 +206,14 @@ def generate(directory):
 <small>Run {esc(manifest['run_id'])} / {esc(manifest['started_at'])} / Status: {esc(manifest['status'])}</small></header>
 <p class="notice">{summary['recorded_trials']} of {summary['planned_trials']} planned trials recorded. {esc(summary['interpretation'])}</p>
 <h2>Resource profiles</h2><p>Pass / recorded includes cancelled, pending, and error records in its denominator. It is not a correctness rate among resolved answers.</p><div class="scroll"><table><thead><tr><th>Profile</th><th>CPU ceiling / RAM ceiling</th><th>Recorded / planned</th><th>Pass / recorded</th><th>Workload median (final passes)</th><th>Outcomes</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>
-<p><small>{esc(summary['latency_scope'])} Sampling interval: {esc(manifest['config']['sample_interval_s'])} s (0 means disabled). CPU limits are not reservations. Memory swap is disabled.</small></p>
+<p><small>{esc(summary['latency_scope'])} Effective sampling intervals are listed per profile in the measurement fidelity section. CPU limits are not reservations. Memory swap is disabled.</small></p>
 <h2>Paired outcome changes</h2><div class="comparisons">{''.join(cards) or '<p>Only one profile: no comparison.</p>'}</div>
 <h2>Task contracts and outcomes</h2><p>Execution success is not correctness. Verified tasks require a successful trusted verifier and a valid positive verdict. Verifier failures are not incorrect answers. Durations above describe workloads only, excluding verification.</p><div class="scroll"><table><thead><tr><th>Task</th><th>Profile</th><th>Contract</th><th>Outcomes</th></tr></thead><tbody>{task_rows}</tbody></table></div>
+<h2>Measurement fidelity</h2>{identity_banner}<p>{esc(grade['scope'])}</p>
+<p><small>Endpoint: {cell(grade['endpoint_source'])} / {cell(grade['endpoint_scheme'])}. Telemetry path: {cell(grade['telemetry_source'])}{'' if not grade['telemetry_unavailable_reason'] else ' (' + esc(grade['telemetry_unavailable_reason']) + ')'}. Pinned Engine API: {cell(grade['api_version_pinned'])}.</small></p>
+<div class="scroll"><table><thead><tr><th>Profile</th><th>Sampling</th><th>CPU affinity</th><th>Telemetry source</th><th>Samples received / retained</th><th>Trial faults</th><th>Enforcement echo</th></tr></thead><tbody>{fidelity_rows}</tbody></table></div>
+<p><small>Samples are raw engine observations, not peaks. A null counter delta means it was not measured on this cgroup version or there were too few usable samples; it is not zero.</small></p>
+<div class="scroll"><table><thead><tr><th>Trial</th><th>Source</th><th>Received / retained</th><th>Telemetry errors</th><th>Truncated / leaked</th><th>Throttled periods</th><th>CPU ns delta</th><th>Max observed memory</th></tr></thead><tbody>{fidelity_trials or '<tr><td colspan="8">No trials recorded.</td></tr>'}</tbody></table></div>
 <h2>Environment and provenance</h2><details><summary>Inspect manifest, schedule, image identities, and configuration</summary><pre>{esc(json.dumps(manifest, indent=2))}</pre></details>
 <h2>Trial evidence</h2>{details or '<p>No trials were recorded. This is not a completed measurement.</p>'}
 <footer>Generated locally by EvalNoise. No scripts, remote fonts, trackers, or network requests. Workload logs may contain sensitive data; review before sharing. Evidence is inspectable, not cryptographically attested.</footer></main></html>"""
