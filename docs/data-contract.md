@@ -8,6 +8,8 @@ Names and IDs match `[a-z][a-z0-9_-]{0,47}`. Seed is 0 through 2^32-1. Repeats a
 
 Task fields: `id`, `image`, `command`; optional `expected_exit` defaults to 0 and allows 0 through 255. Command is an argv array with 1 to 64 string entries; each entry is at most 8192 characters with no NUL. No host shell interpolation occurs. A command can still invoke a shell inside a trusted image: validation is not a substitute for reviewing code.
 
+v0.2 adds optional `verifier` (null/absent means the original exit contract). Its required fields are `image`, `command`, `version` (ID syntax), `cpus`, `memory_mb`, and `timeout_s`; bounds are the same as their task/profile equivalents. The [verification contract](verification.md) defines `json-env-v1` and its 8192-byte payload limit.
+
 Profile fields: `id`, `cpus` (0.1 to 64), `memory_mb` (16 to 65536, integer MiB), `timeout_s` (0.1 to 3600); optional `concurrency` (1 to 16, default 1). These syntactic maxima are not promises that the current engine can support the profile. Effective shared-host capacity remains an operator responsibility.
 
 ## Artifact Directory
@@ -19,12 +21,19 @@ Profile fields: `id`, `cpus` (0.1 to 64), `memory_mb` (16 to 65536, integer MiB)
 - `summary.json`: profile outcomes, recorded/missing counts, pass rates, successful-duration medians, matched-pair transitions and deltas.
 - `trials.csv`: flat core outcomes and timing for inspection.
 - `report.html`: self-contained escaped evidence notebook.
+- `verification/trials/<trial-id>-verify.json`: independent verifier execution records for verifier-enabled tasks. These are also embedded in finalized parent trials; they are not additional workload observations.
+
+New manifests include `task_contracts`, `measurement_kind`, and `verification_schedule`. Each new trial includes `contract_sha256` and `execution_status`. Verified trials retain the available `artifact` and `verification` evidence (version, protocol, nested trial, accepted verdict or error), plus `verification_finished_at`; failures before a stage omit evidence that was never produced. Hashes are recomputed/checked when present; older M0 manifests without them remain readable.
 
 Per-trial files are the source of truth for recorded counts when rebuilding. Missing files remain missing observations. The reporter refuses duplicate, unexpected, or task/profile/repetition-mismatched records. Artifacts are trusted local inputs, not a public untrusted-upload format; comprehensive hostile-artifact schema validation is future work.
 
 ## Trial Statuses
 
-`passed`: exited with expected code and no observed OOM or runtime error.
+`passed`: exited with expected code and no observed OOM or runtime error; a verifier-enabled task additionally requires successful verifier execution and a valid positive verdict.
+
+`pending_verification`: successful execution awaiting independent verification; not a pass and excluded from complete paired contrasts.
+
+`verification_failed`: valid negative trusted verdict. `artifact_error`: missing/invalid candidate artifact. `verifier_error`: verifier process/protocol/cleanup failure, not an incorrect-answer verdict. See the separate `execution_status` and nested verifier record.
 
 `workload_failed`: exited with a different code; not an inferred model reasoning failure.
 

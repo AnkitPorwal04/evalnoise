@@ -7,6 +7,7 @@ JSON -> strict config -> seeded plan -> engine/image preflight
      -> manifest -> sequential randomized profile batches
      -> bounded worker pool -> create -> start -> inspect/poll
      -> classify -> logs -> remove -> atomic trial JSON
+     -> batch barrier -> independent verifiers -> finalized trial JSON
      -> final manifest -> offline JSON / CSV / HTML
 ```
 
@@ -17,6 +18,7 @@ Image IDs are resolved once before execution. Each task/repetition pair uses the
 - `config.py`: strict parsing, ranges, configuration hashing, and schedule generation.
 - `docker.py`: argv-only Docker boundary, preflight, immutable image resolution, hardened creation, inspection, optional sampling, logs, cleanup, outcome classification.
 - `runner.py`: lifecycle ownership, batch scheduling, cancellation, and experiment artifacts.
+- `verification.py`: bounded artifact/verdict parsing and immutable task contract hashes.
 - `storage.py`: temporary-file, fsync, atomic-replace JSON persistence.
 - `report.py`: identity checks, descriptive aggregation, CSV and escaped offline HTML.
 - `cli.py`: explicit trust acknowledgement and commands. No network service or privileged web API.
@@ -44,6 +46,14 @@ Accepted. Human-readable tags are allowed in input for convenience but are resol
 ## ADR 006: Sampling Disabled By Default
 
 Accepted. CLI stats have collection overhead and miss short-lived peaks. Optional samples are raw observations with elapsed and collection time, not peak memory, exact CPU quota usage, or throttling counters. A streaming Engine API sampler is future work and must support explicit Docker endpoint resolution rather than assuming a socket path.
+
+## ADR 007: Independent Verification After The Workload Batch
+
+Accepted for v0.2. Optional trusted verifier images receive bounded JSON data, not executable candidate files or host mounts. All workload containers in a batch are removed before sequential verification starts. A successful workload is first persisted as `pending_verification`; only a successful verifier process with a valid positive verdict can finalize it as passed. Workload and verifier budgets and evidence remain separate. This avoids direct verifier/workload overlap, not host-cache or thermal effects between batches.
+
+## ADR 008: Stop Loading After Cleanup Failure
+
+Accepted. Any workload cleanup failure prevents verification and subsequent batches. Any verifier cleanup failure prevents further verification and batches. Pending records remain pending rather than inventing verdicts. A contract hash includes task definitions, resolved workload/verifier image IDs, and protocol identity; reports validate consistency, but hashes are not signatures or proof against coordinated artifact editing.
 
 ## Reliability Boundaries
 
