@@ -199,6 +199,37 @@ class EvidenceTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_post_kill_inspection_failure_preserves_cancellation(self):
+        stop = threading.Event()
+        class LostAfterKill(FakeDocker):
+            def inspect(self, name):
+                if any(call[0] == "kill" for call in self.calls):
+                    raise DockerError("Post-kill inspection unavailable")
+                stop.set()
+                return {"state": {"Running": True, "Status": "running"}}
+        backend = LostAfterKill()
+        experiment = parse(config())
+        with tempfile.TemporaryDirectory() as root:
+            result = trial(backend, "run", Path(root), {"id": "trial", "seed": 0}, experiment.tasks[0],
+                           experiment.profiles[0], {"id": "image"}, 0, stop)
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(len(backend.removed), 1)
+        self.assertIn("Post-kill", result["error"])
+
+    def test_unexpected_log_error_still_cleans_and_persists(self):
+        class BrokenLogs(FakeDocker):
+            def logs(self, name):
+                raise ValueError("Unexpected log decoder bug")
+        backend = BrokenLogs()
+        experiment = parse(config())
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaises(ValueError):
+                trial(backend, "run", Path(root), {"id": "trial", "seed": 0}, experiment.tasks[0],
+                      experiment.profiles[0], {"id": "image"}, 0, threading.Event())
+            result = json.loads((Path(root) / "trials/trial.json").read_text())
+        self.assertEqual(result["status"], "runner_error")
+        self.assertEqual(len(backend.removed), 1)
+        self.assertIn("log decoder", result["error"])
     def run_trial(self, backend, stop=None, interval=0):
         experiment = parse(config())
         profile = experiment.profiles[0]
