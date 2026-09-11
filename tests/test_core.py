@@ -1,10 +1,13 @@
 from copy import deepcopy
+import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
 import time
 import unittest
+import uuid
 from unittest.mock import patch
 
 from evalnoise.config import ConfigError, load, parse, plan
@@ -20,26 +23,51 @@ def config():
     return json.loads((ROOT / "experiments/calibration.json").read_text())
 
 
+def setUpModule():
+    directory = tempfile.mkdtemp(prefix="evalnoise-state-")
+    os.environ["EVALNOISE_STATE_DIR"] = directory
+
+
 class FakeDocker:
-    def __init__(self, state=None, failure=None):
+    """Mirrors the real Docker backend contract used by the runner."""
+
+    def __init__(self, state=None, failure=None, engine_id=None, telemetry_source="disabled"):
         self.state = state or {"Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False,
                                "StartedAt": "2026-09-11T10:00:00Z", "FinishedAt": "2026-09-11T10:00:01Z"}
         self.failure = failure
         self.removed = []
         self.calls = []
+        self.engine_id = engine_id or uuid.uuid4().hex
+        self.engine_identity = {"id": self.engine_id}
+        self.owner_token = None
+        self.telemetry = {"telemetry_source": telemetry_source}
+        self.profiles = {}
+        self.streams = []
+        self.identity_error = None
+        self.engine_id_at_end = None
 
     def doctor(self):
-        return {"engine": {"Architecture": "arm64", "NCPU": 4, "MemTotal": 2**30}}
+        return {"engine": {"Architecture": "arm64", "NCPU": 4, "MemTotal": 2**30, "CgroupVersion": "2"},
+                "engine_identity": {"id": self.engine_id}, "telemetry": self.telemetry,
+                "endpoint": {"source": "default", "scheme": "unix", "local_unix_socket": True}}
+
+    def identity(self):
+        if self.identity_error:
+            raise DockerError(self.identity_error)
+        return {"id": self.engine_id_at_end or self.engine_id}
 
     def image(self, reference):
-        return {"id": "sha256:abc", "architecture": "arm64"}
+        digest = "sha256:" + hashlib.sha256(reference.encode()).hexdigest()
+        return {"id": digest, "architecture": "arm64"}
 
-    def create(self, name, *args):
+    def create(self, name, run_id=None, task=None, profile=None, *args, **kwargs):
         if self.failure == "create":
             raise DockerError("create failed")
+        if profile is not None:
+            self.profiles[name] = profile
         return name
 
-    def call(self, args, **kwargs):
+    def call(self, args, timeout=20, merge=False):
         self.calls.append(args)
         if args[0] == self.failure:
             raise DockerError("command failed")
@@ -47,10 +75,22 @@ class FakeDocker:
             self.state = {**self.state, "Running": False, "Status": "exited", "ExitCode": 137}
         return ""
 
+    def resources(self, name):
+        profile = self.profiles.get(name)
+        if profile is None:
+            return {}
+        return {"NanoCpus": round(profile.cpus * 10**9), "Memory": profile.memory_mb * 1024**2,
+                "MemorySwap": profile.memory_mb * 1024**2, "PidsLimit": 128, "NetworkMode": "none",
+                "ReadonlyRootfs": True, "CpusetCpus": profile.cpuset_cpus or ""}
+
     def inspect(self, name):
         if self.failure == "inspect":
             raise DockerError("inspect failed")
-        return {"state": self.state}
+        return {"state": self.state, "resources": self.resources(name),
+                "container_id": "c" * 64, "labels": {}}
+
+    def stream(self, container_id, interval, started):
+        return None
 
     def stats(self, name):
         return {"MemUsage": "1MiB / 48MiB"}
@@ -205,8 +245,9 @@ class LifecycleTests(unittest.TestCase):
             def inspect(self, name):
                 if any(call[0] == "kill" for call in self.calls):
                     raise DockerError("Post-kill inspection unavailable")
-                stop.set()
-                return {"state": {"Running": True, "Status": "running"}}
+                if name in self.profiles:
+                    stop.set()
+                return {**super().inspect(name), "state": {"Running": True, "Status": "running"}}
         backend = LostAfterKill()
         experiment = parse(config())
         with tempfile.TemporaryDirectory() as root:
