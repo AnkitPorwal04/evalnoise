@@ -45,6 +45,8 @@ python3 scripts/record_cassette.py --policy lazy --label scripted-lazy-policy --
 
 The GitHub Actions definition covers Python 3.11 through 3.14 and a real Docker job. A workflow file is not evidence that CI has run. Keep local and remote verification claims separate.
 
+Note that CI never runs the real-3.11 compile check: no job puts a `python3.11` on `PATH` under that name, so `test_compat.RealInterpreterTests` skips on all five jobs, including `unit (3.11)`. CI does run the whole suite *under* 3.11, which is stronger, but that particular guard is a local-only check. Run the suite with a `python3.11` on `PATH` before publishing.
+
 ## Experiment Checks
 
 Run calibration and A/A sequentially. Verify exact trial counts, missingness, raw OOM flags, immutable image IDs, profile echoes, and cleanup errors. A successful CLI return alone is insufficient. Inspect the generated HTML on desktop and a narrow viewport; expand both manifest and trial evidence.
