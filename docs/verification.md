@@ -75,6 +75,24 @@ Verifier activity can still change host caches or thermal state before the next 
 
 Non-successful workload execution retains its original status and does not launch a verifier. Legacy tasks keep their exit-code meaning. Reports label both contract kinds and retain task-level outcomes instead of calling all non-passes incorrect answers.
 
+## agent-step-v1
+
+v0.4 adds a bounded agent loop in front of this protocol. It does not change the verifier contract: an agent's final answer becomes an ordinary `evalnoise_artifact` and is checked by the same separately executed trusted verifier, under the same batch barrier and the same halt-on-cleanup-failure rule.
+
+The model turn runs in the runner process. Each tool action runs as a fresh hardened container that receives the seed and a bounded tool call in `EVALNOISE_TOOL_CALL_B64`, and answers with exactly one record in its logs:
+
+```json
+{"evalnoise_observation":{"version":1,"payload":{"tool_call_id":"c1","result":{"files":["limit.txt","notes.txt"]}}}}
+```
+
+Observations obey the same strict envelope rules as artifacts and verdicts: exactly one record, `version` and `payload` only, at most 8192 UTF-8 bytes, no duplicate keys, no non-finite numbers, and truncated logs cannot establish a record. A retained observation is additionally bounded to 4096 characters. A tool that is asked for something unavailable returns an `error` field inside its payload, which is an observation the loop can act on, rather than crashing; a crashed, malformed, oversized, or timed-out tool container is an `agent_error` and retains the raw container record.
+
+The tool table is fixed: `list_files`, `read_file`, and the host-side `final_answer`. Tool calls are validated against that table, including exact argument names and types, **before** a container is created. There is no shell, no expression evaluation, and no template execution, and tools are pure functions of `(seed, tool_call)` because every step is a fresh container.
+
+A final answer is normalized through the same strict rules as a log-parsed artifact rather than being written back into fabricated container logs. The parent trial becomes `pending_verification` exactly as a scripted candidate would, and only the trusted verifier can finalize it. An agent task without a verifier is a configuration error.
+
+The provider is a recorded cassette keyed by the SHA-256 of the full canonical request, including the whole message history with every prior observation verbatim. A miss is a hard error. This makes a replay faithful to the recorded interaction; it is **not** a claim that the fixture answer is underivable without tools, and it establishes nothing about model capability.
+
 ## Authoring Checklist
 
 - Keep trusted verifier code in a separate reviewed image and bump its version when semantics change.

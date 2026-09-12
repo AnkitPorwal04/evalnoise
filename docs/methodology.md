@@ -34,6 +34,16 @@ The host deadline starts immediately before the Docker start request, excluding 
 
 `lifecycle_s` is host monotonic elapsed time including creation, evidence collection, and cleanup. `container_duration_s` uses the daemon's start/finish timestamps only. Do not subtract timestamps from different clock domains. Clock discontinuity detection inside the daemon is not implemented.
 
+## Agent Trials And Clock Domains
+
+An agent trial is an aggregate of bounded steps, not a container observation. Its `container_name` and `container_duration_s` are null on purpose, and `measurement_kind` is `agent_step_aggregate`. Three clocks are kept separate and are never summed into a container measurement: `provider_s_total` is host-side model time, `tool_container_s_total` sums the step containers' own lifecycles, and `agent_wall_s` is the host monotonic span of the loop. Each step container additionally retains its own ordinary trial record with its own timing, enforcement audit, and classification.
+
+In the offline slice the provider is a recorded cassette, so `provider_s_total` is a replay lookup cost of roughly zero. It is not a latency measurement and must not be compared to a real provider. A real provider would move a large, variable, network-dependent quantity into the middle of the loop, which is one of the reasons the full M3 gate stays open.
+
+Recorded pass rates for agent tasks use the same denominators as everything else. `agent_error`, `budget_exhausted`, and `step_limit_reached` are recorded non-passes and are not incorrect answers. A budget refusal is a property of the declared ceiling, not of the model.
+
+The in-repo fixture answer is a sum of squares up to a seed-derived limit and is arithmetically derivable once the limit is known. **No claim is made that the answer is impossible without tools, and none about model capability.** What the recorded provider establishes is narrower: the cassette key covers the whole message history, so a replay is faithful to the interaction that was recorded and cannot silently skip a tool call; a miss is a hard error rather than a generated reply; and the answer is still checked by the independent trusted verifier.
+
 ## Failure Interpretation
 
 OOMKilled is evidence that Docker observed an OOM kill, not proof of which limit caused it or whether an agent would otherwise succeed. Exit 137 without OOMKilled is an unattributed workload failure. Expected exit plus OOMKilled is its own non-clean outcome. Timeout and cancellation are runner interventions; their resulting kill exit code must not be relabeled as OOM merely because it is 137.
