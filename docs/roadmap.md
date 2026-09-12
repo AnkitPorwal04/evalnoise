@@ -35,11 +35,28 @@ The overhead item is recorded as a **descriptive contrast, not a measurement of 
 
 Not in scope for M2: remote-endpoint streaming, auto-resume after a crash, cross-run telemetry aggregation, any CPU-percentage or peak-memory figure, and any inferential claim about sampler cost.
 
-## M3: Agent And Benchmark Integration
+## M3: Agent And Benchmark Integration - Offline Slice Implemented, Gate Open
 
-Start with one adapter, preferably through an existing framework such as Harbor after verifying its current contract. Record agent version, model identifier, provider parameters, token/cost observations, retry policy, task version, and verifier identity. Design credentials/network policy before adding API access.
+Implemented in v0.4: a bounded tool/action loop whose model turn runs in the runner process and whose every tool action runs as a fresh hardened container through the ordinary trial path; a recorded provider keyed by the full canonical request; a synthetic integer micro-USD budget ledger with admission before each provider call and each tool container; agent provenance in the task contract hash; and recovery that enumerates every bounded agent step container. See [the plan](m3-plan.md) and [the protocol](verification.md).
 
-Gate: a small public, reviewed task subset runs end to end with independent verification; no credentials in artifacts; deterministic fake-provider tests plus an explicitly budgeted real-provider test. No paid or credentialed run without authorization.
+Harbor's current contract was verified against its primary sources before choosing. Harbor's `BaseEnvironment` is pluggable, so an EvalNoise-backed Harbor environment remains a reasonable future option; the decision here was bounded integration scope for this slice, not a judgement that Harbor is unsuitable. Harbor's ATIF field names are reused so a later exporter is a mapping rather than a rewrite. See ADR 012.
+
+Offline slice gate, each item backed by a named test or run in [the validation log](validation.md):
+
+- [x] Replay is deterministic across runs and a cassette miss is a hard error, never a generated reply
+- [x] The cassette key covers the whole message history, so a transcript missing an observation cannot be replayed
+- [x] Budget admission refuses before the provider call and before the tool container; an unaffordable plan is refused before any directory or container exists
+- [x] Money is integer micro-USD end to end; a float anywhere in the ledger fails a test
+- [x] Simulated reported usage is reported separately from the zero actual charge and zero requests sent
+- [x] No credential environment name or value reaches a container argv, an artifact, or a report
+- [x] Every agent step container keeps `--network none` and passes the enforcement audit
+- [x] Provenance recorded: agent name/version, model, parameters, per-attempt retry outcomes, per-step token and simulated cost, tool image ID, cassette digest, contract hash
+- [x] A report regenerates offline from the manifest snapshot without the cassette file, while a mutated snapshot is refused
+- [x] Step limit, tool failure, protocol failure, budget refusal, and cancellation each produce explicit non-pass statuses and never a fabricated verdict
+- [x] Agent clock domains stay separate and the parent record claims no container duration
+- [x] `diagnose` and `cleanup --confirm` cover agent step containers after a real `SIGKILL`
+
+**The full M3 gate remains OPEN.** It still requires an explicitly authorized and budgeted real-provider run, a small public reviewed task subset that is not this in-repo fixture, measured rather than simulated retry and timeout attribution, and a price table checked against an actual invoice. No live client or credential lookup exists in the codebase. The `tools/` and `cassettes/` fixtures are reviewed in-repo material, not a public benchmark dataset, and establish nothing about model capability.
 
 ## M4: Statistical Comparison Engine
 
