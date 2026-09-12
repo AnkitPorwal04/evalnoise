@@ -30,6 +30,18 @@ A single advisory lock per daemon ID keeps cooperating EvalNoise runs from overl
 
 `evalnoise probe` starts a configured image as trusted code and therefore requires `--trust-config` like `run`. It is not a read-only command.
 
+## Agent Slice Credential And Network Policy
+
+v0.4 adds a bounded agent loop whose model turn runs in the runner process, never inside a measured container. Tool containers keep every existing restriction, including `--network none`, and receive only the seed and a bounded base64 tool call in `EVALNOISE_TOOL_CALL_B64`. The Docker boundary accepts only that variable or `EVALNOISE_ARTIFACT_B64` for the bounded handoff; any other name is refused. As with the verifier envelope, base64 is not encryption and Docker administrators can read it.
+
+**There is no live provider client and no credential lookup anywhere in the codebase.** `provider.py` contains no HTTP client, no socket use, and no environment access, and a test asserts the absence of those constructs and that a full replay completes with `socket.socket` patched to raise. `provider.kind` accepts only `recorded`. Agent `parameters` is a closed numeric whitelist, so a configuration cannot smuggle an API key, base URL, or environment mapping into an artifact. A test sets fake `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` values and asserts that neither the name nor the value appears in any container argv, trial record, manifest, or report.
+
+Cassettes are reviewed in-repo fixtures. They are frozen and hashed at preflight, bounded to 1 MiB and 512 entries, parsed strictly with duplicate-key and non-finite rejection, and restricted to a relative path of at most four components that resolves inside the configuration's own directory. Their digest enters the task contract hash. This detects an inconsistent or edited cassette; it is not a signature and not protection against an attacker who rewrites every hash. Do not put secrets in a cassette, a tool call, or an observation: all three are retained in artifacts.
+
+The budget ledger is **synthetic**. It admits and prices against a table declared in the configuration and records `actual_charged_micros: 0` and `provider_requests_sent: 0` because nothing is sent. Its prompt estimate is a local character heuristic, not a provider tokenizer, and must not be relied on as a spending control for a real provider. A real-provider path would need its own credential and network review before any key is read; none is authorized or implemented.
+
+Agent step containers are named `evalnoise-<run>-<trial>-sNN` and carry the same run, engine, and owner labels as any other container, so `diagnose` and `cleanup --confirm` cover them under the existing ownership rules. The configuration bounds total planned containers so that recovery's name enumeration stays finite.
+
 After SIGKILL, host failure, or daemon outage, prefer the built-in commands, which refuse anything this run does not own:
 
 ```sh
