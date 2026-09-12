@@ -16,7 +16,7 @@ from .docker import DockerError
 from .endpoint import utc
 from .storage import write_json
 
-NAME = re.compile(r"^evalnoise-[0-9a-f]{6,32}-[a-z0-9][a-z0-9_-]{0,63}(-verify)?$")
+NAME = re.compile(r"^evalnoise-[0-9a-f]{6,32}-[a-z0-9][a-z0-9_-]{0,63}(-verify|-s[0-9]{2})?$")
 FULL_ID = re.compile(r"^[0-9a-f]{64}$")
 IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -52,14 +52,29 @@ def load_manifest(directory):
 
 
 def expected_names(manifest):
-    """Names and their stages are derived from the validated plan, never from free text."""
+    """Names and their stages are derived from the validated plan, never from free text.
+
+    An agent task runs no parent container and up to `agent.max_steps` step containers, so
+    the step names are enumerated from that declared bound. The configuration caps total
+    planned containers, which keeps this enumeration finite.
+    """
     run_id = manifest["run_id"]
     tasks = {task["id"]: task for task in manifest["config"]["tasks"]}
     names = {}
     for batch in manifest["plan"]:
         for trial in batch["trials"]:
             base = f"evalnoise-{run_id}-{trial['id']}"
-            names[base] = (trial["task"], "workload")
+            agent = tasks[trial["task"]].get("agent")
+            if agent:
+                steps = agent["max_steps"]
+                if type(steps) is not int or not 1 <= steps <= 20:
+                    raise RecoveryError(
+                        f"Task {trial['task']!r} declares an unusable agent.max_steps; refusing "
+                        "to derive step container names")
+                for index in range(1, steps + 1):
+                    names[f"{base}-s{index:02d}"] = (trial["task"], "agent_step")
+            else:
+                names[base] = (trial["task"], "workload")
             if tasks[trial["task"]].get("verifier"):
                 names[base + "-verify"] = (trial["task"], "verifier")
     for name in names:
@@ -71,7 +86,8 @@ def expected_names(manifest):
 def stage_image(manifest, task_id, stage):
     """Each stage has exactly one expected image identity; a union would accept the wrong one."""
     task = next(t for t in manifest["config"]["tasks"] if t["id"] == task_id)
-    reference = task["image"] if stage == "workload" else (task.get("verifier") or {})["image"]
+    reference = (task["image"] if stage in ("workload", "agent_step")
+                 else (task.get("verifier") or {})["image"])
     identity = (manifest["images"].get(reference) or {}).get("id")
     if not isinstance(identity, str) or not IMAGE_ID.fullmatch(identity):
         raise RecoveryError(
