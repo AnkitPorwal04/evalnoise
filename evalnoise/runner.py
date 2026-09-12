@@ -11,11 +11,13 @@ import time
 import uuid
 
 from . import __version__
+from .budget import Ledger, admit_plan
 from .config import cpuset, plan, Profile, Task
 from .coordination import EngineLock, refuse_orphans, SCOPE
 from .docker import audit, Docker, DockerError, EnforcementError, classify, container_duration
+from .provider import load_cassette
 from .storage import write_json
-from .verification import contract_hash, envelope
+from .verification import contract_hash, envelope, normalize
 
 
 def utc():
@@ -123,7 +125,8 @@ class CliSampler:
                                  "derived from it. Null means not measured, never zero.")}
 
 
-def trial(backend, run_id, directory, specification, task, profile, image, interval, stop, artifact=None):
+def trial(backend, run_id, directory, specification, task, profile, image, interval, stop,
+          artifact=None, artifact_env="EVALNOISE_ARTIFACT_B64"):
     name = f"evalnoise-{run_id}-{specification['id']}"
     result = {"schema_version": 1, **specification, "profile": profile.id,
               "container_name": name, "started_at": utc(), "status": "unknown",
@@ -141,7 +144,7 @@ def trial(backend, run_id, directory, specification, task, profile, image, inter
             result["cancelled"] = True
             return result
         attempted = True
-        extra = {"artifact": artifact} if artifact is not None else {}
+        extra = {"artifact": artifact, "artifact_env": artifact_env} if artifact is not None else {}
         result["container_id"] = backend.create(name, run_id, task, profile, image, specification["seed"], **extra)
         result["created_after_s"] = time.monotonic() - started
         created = backend.inspect(name)
@@ -234,6 +237,33 @@ def trial(backend, run_id, directory, specification, task, profile, image, inter
     return result
 
 
+def agent_trial(backend, run_id, directory, specification, task, profile, image, stop,
+                provider, ledger):
+    """Aggregates bounded agent steps. There is no parent container, so no duration is claimed."""
+    from .agent import run_agent
+    started = time.monotonic()
+    result = {"schema_version": 1, **specification, "profile": profile.id,
+              "container_name": None, "container_duration_s": None, "started_at": utc(),
+              "status": "agent_incomplete", "execution_status": "agent_incomplete",
+              "measurement_kind": "agent_step_aggregate",
+              "telemetry": [], "telemetry_errors": [], "evidence_errors": [],
+              "telemetry_source": "disabled", "telemetry_meta": None, "resource_audit": None,
+              "cleanup_error": None, "timed_out": False, "cancelled": False}
+    try:
+        run_agent(backend, run_id, directory, result, task, profile, image, stop, provider, ledger)
+    except Exception as error:
+        result["status"] = "runner_error"
+        result["execution_status"] = "runner_error"
+        result["error"] = f"{type(error).__name__}: {error}"
+        write_json(directory / "trials" / f"{specification['id']}.json", result)
+        raise
+    finally:
+        result["finished_at"] = utc()
+        result["lifecycle_s"] = time.monotonic() - started
+        write_json(directory / "trials" / f"{specification['id']}.json", result)
+    return result
+
+
 def verify(backend, run_id, directory, result, task, image, stop):
     spec = task.verifier
     if not spec or result["status"] != "pending_verification":
@@ -249,7 +279,13 @@ def verify(backend, run_id, directory, result, task, image, stop):
             result["verification"]["error"] = "Workload cleanup failed; verifier was not started"
             return
         try:
-            value, artifact = envelope(result.get("logs", {}), "evalnoise_artifact")
+            if task.agent:
+                # An agent's answer is produced on the host, so it is validated by the same
+                # strict rules instead of being written back into fabricated container logs.
+                value, artifact = normalize((result.get("agent") or {}).get("final_artifact"),
+                                            "evalnoise_artifact")
+            else:
+                value, artifact = envelope(result.get("logs", {}), "evalnoise_artifact")
         except ValueError as error:
             result["status"] = "artifact_error"
             result["verification"]["error"] = str(error)
@@ -312,15 +348,24 @@ def engine_stability(backend, expected):
             "note": "Daemon ID compared before and after the run"}
 
 
-def execute(experiment, output, backend=None, stop=None):
+def execute(experiment, output, backend=None, stop=None, config_dir=None):
     backend = backend or Docker()
     stop = stop or threading.Event()
+    provider, ledger, admission = None, None, None
+    if any(task.agent for task in experiment.tasks):
+        provider = load_cassette(experiment.provider["cassette"], config_dir or Path.cwd())
+        prices = experiment.budget["prices"]
+        budget = {k: v for k, v in experiment.budget.items() if k != "prices"}
+        # Plan admission runs before the engine is touched or any directory exists.
+        admission = admit_plan(experiment, plan(experiment), budget, prices)
+        ledger = Ledger(budget, prices)
     environment = backend.doctor()
     images = {task.image: backend.image(task.image) for task in experiment.tasks}
     for task in experiment.tasks:
         if task.verifier and task.verifier.image not in images:
             images[task.verifier.image] = backend.image(task.verifier.image)
-    contracts = {task.id: contract_hash(task, images) for task in experiment.tasks}
+    snapshot = provider.snapshot if provider else None
+    contracts = {task.id: contract_hash(task, images, snapshot) for task in experiment.tasks}
     engine = environment["engine"]
     if any(image["architecture"] not in (engine.get("Architecture"),
             {"aarch64": "arm64", "x86_64": "amd64"}.get(engine.get("Architecture"))) for image in images.values()):
@@ -334,13 +379,13 @@ def execute(experiment, output, backend=None, stop=None):
     lock.acquire(run_id, output)
     try:
         return _execute_locked(experiment, output, backend, stop, environment, images, contracts,
-                               engine_identity, run_id, lock)
+                               engine_identity, run_id, lock, provider, ledger, admission)
     finally:
         lock.release()
 
 
 def _execute_locked(experiment, output, backend, stop, environment, images, contracts,
-                    engine_identity, run_id, lock):
+                    engine_identity, run_id, lock, provider=None, ledger=None, admission=None):
     # Orphans are rechecked while the lock is held; checking before acquiring it is a race.
     refuse_orphans(backend, lock.engine_id, run_id)
     backend.owner_token = lock.token
@@ -356,6 +401,8 @@ def _execute_locked(experiment, output, backend, stop, environment, images, cont
                  "verification_schedule": "Sequential after each workload batch, before the next batch; no workload/verifier overlap",
                  "cache_policy": "pre-existing image cache; fresh containers; host page cache uncontrolled",
                  "coordination": {**lock.record(), "orphan_check": "refused_if_present"},
+                 "provider_snapshot": provider.snapshot if provider else None,
+                 "budget_admission": admission,
                 "warnings": ["No CPU or memory reservations. Other host workloads are uncontrolled.",
                              SCOPE,
                              "Scripted workloads do not measure model capability.",
@@ -376,10 +423,12 @@ def _execute_locked(experiment, output, backend, stop, environment, images, cont
             profile = profiles[batch["profile"]]
             def run(specification):
                 task = tasks[specification["task"]]
-                return trial(backend, run_id, directory,
-                              {**specification, "repeat": batch["repeat"], "batch": batch["batch"],
-                               "contract_sha256": contracts[task.id]},
-                             task, profile, images[task.image],
+                spec = {**specification, "repeat": batch["repeat"], "batch": batch["batch"],
+                        "contract_sha256": contracts[task.id]}
+                if task.agent:
+                    return agent_trial(backend, run_id, directory, spec, task, profile,
+                                       images[task.image], stop, provider, ledger)
+                return trial(backend, run_id, directory, spec, task, profile, images[task.image],
                              experiment.sample_interval_s if profile.sample_interval_s is None
                              else profile.sample_interval_s, stop)
             with ThreadPoolExecutor(max_workers=profile.concurrency) as pool:
@@ -407,6 +456,7 @@ def _execute_locked(experiment, output, backend, stop, environment, images, cont
             signal.signal(signum, handler)
         if manifest["status"] == "running":
             manifest["status"] = "interrupted"
+        manifest["budget_ledger"] = ledger.data() if ledger else None
         manifest["engine_identity_final"] = engine_stability(backend, engine_identity)
         if not manifest["engine_identity_final"]["stable"]:
             manifest["warnings"] = manifest["warnings"] + [
