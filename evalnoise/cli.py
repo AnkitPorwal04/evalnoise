@@ -5,8 +5,10 @@ import json
 from pathlib import Path
 import sys
 
+from .budget import BudgetError
 from .config import ConfigError, load, plan
 from .coordination import CoordinationError
+from .provider import ProviderError
 from .docker import Docker, DockerError
 from .probe import run as probe_run
 from .recovery import RecoveryError, cleanup, diagnose
@@ -64,12 +66,13 @@ def main(argv=None):
             else:
                 if not args.trust_config:
                     raise ConfigError("Review images and commands, then pass --trust-config. Containers are not a hostile-code security boundary.")
-                directory = execute(experiment, args.output)
+                directory = execute(experiment, args.output, config_dir=args.config.resolve().parent)
                 summary = generate(directory)
                 print(json.dumps({"directory": str(directory.resolve()), "status": summary["status"],
                                   "report": str((directory / "report.html").resolve())}, indent=2))
                 return 0 if summary["status"] == "completed" else 2
         return 0
-    except (ConfigError, CoordinationError, DockerError, RecoveryError, OSError, ValueError, KeyError) as error:
+    except (BudgetError, ConfigError, CoordinationError, DockerError, ProviderError,
+            RecoveryError, OSError, ValueError, KeyError) as error:
         print(f"evalnoise: {error}", file=sys.stderr)
         return 2
