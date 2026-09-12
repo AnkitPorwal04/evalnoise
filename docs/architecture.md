@@ -28,6 +28,7 @@ Image IDs are resolved once before execution. Each task/repetition pair uses the
 
 - `config.py`: strict parsing, ranges, configuration hashing, and schedule generation.
 - `provider.py`: recorded deterministic completions keyed by the full canonical request. No HTTP client, socket use, or credential lookup.
+- `subscription.py`: experimental, outside the measurement core. One known-answer `codex exec` smoke check against an authorized ChatGPT subscription, gated by a zero-model preflight that blocks unless the child's tool catalog is verified non-executing. Reads no auth file and holds no API key; the official `codex` binary is the only client.
 - `budget.py`: integer micro-USD admission and a run-scoped, mutex-guarded synthetic ledger.
 - `agent.py`: the bounded tool/action loop, its fixed tool table, and ATIF-shaped step records.
 - `endpoint.py`: endpoint resolution and pinning, Engine API negotiation, bounded cancel-safe stats streaming, cgroup field availability.
