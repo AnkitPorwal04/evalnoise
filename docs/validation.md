@@ -203,7 +203,15 @@ Two publication blockers were found in v0.4 code before release, both PEP 701 sy
 
 Two regression tests pin the five v0.3 configuration digests and the three v0.3 `verified.json` contract hashes, recorded from the v0.3 tree at commit `c8ea9ca`, because v0.4 adds optional fields that must never enter a hash when unset.
 
-**No remote CI run exists for v0.4 yet.** The workflow now builds `evalnoise-tools:local` and compiles `tools` and `scripts`, but a workflow file is not evidence that CI has run.
+### v0.4 Remote CI
+
+The published v0.4 commit `69fb72b` passed GitHub Actions run [`34680930513`](https://github.com/AnkitPorwal04/evalnoise/actions/runs/34680930513) on all five jobs. The Docker job built all four images — `evalnoise-workloads:local`, `evalnoise-verifier:local`, `evalnoise-probe:local`, and `evalnoise-tools:local` — and ran **293 tests in 65.7 s, `OK (skipped=1)`**. The single skip is `test_compat.RealInterpreterTests.test_python311_compiles_every_package`, skipped as `no python3.11 interpreter on PATH`: the Docker job installs no second interpreter, so the real-3.11 compile check does not run there.
+
+The four unit jobs each ran the same **293 tests with `OK (skipped=22)`** — the 21 Docker methods plus that same real-interpreter check. It is skipped even in the `unit (3.11)` job, because that job exposes its interpreter as `python`, not as `python3.11`, and the check looks for the latter on `PATH`. **The real-3.11 compile check therefore did not execute anywhere in CI**, on any job. Remote CI proves the suite passes *under* 3.11, which is the stronger property, but the specific guard added for the PEP 701 defects is currently exercised only on this workstation. Do not read a green CI as evidence that that guard ran.
+
+Job times were 5.0 s (3.11), 8.8 s (3.12), 7.9 s (3.13), 7.7 s (3.14), and 65.7 s (Docker). The Docker job is markedly slower than the 44.1 s local run, which is expected on a cold shared runner and is not a measurement of anything.
+
+This is a single remote observation on GitHub-hosted amd64 runners. It confirms the suite is portable off this workstation; it is **not** independent evidence about the intermittency recorded above, which has only ever been observed locally, and one green remote run is not a sample. The workflow again emitted the non-blocking warning that `actions/checkout@v4` and `actions/setup-python@v5` target the deprecated Node.js 20 and are forced onto Node.js 24; no job failed because of it and no action was pinned or upgraded in response.
 
 ### v0.4 Remaining Gaps
 
