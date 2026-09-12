@@ -30,7 +30,7 @@ class VerifiedDocker(FakeDocker):
         self.verdict, self.verifier_status, self.candidate = verdict, verifier_status, candidate
         self.created, self.artifacts = [], []
 
-    def create(self, name, run_id=None, task=None, profile=None, *args, artifact=None):
+    def create(self, name, run_id=None, task=None, profile=None, *args, artifact=None, **kwargs):
         super().create(name, run_id, task, profile)
         self.created.append(name)
         if artifact is not None:

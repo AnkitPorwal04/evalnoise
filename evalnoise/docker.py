@@ -146,12 +146,15 @@ class Docker:
                 "os": info["Os"], "architecture": info["Architecture"],
                 "variant": info.get("Variant"), "created": info.get("Created")}
 
-    def create(self, name, run_id, task, profile, image, seed, artifact=None):
+    def create(self, name, run_id, task, profile, image, seed, artifact=None,
+               artifact_env="EVALNOISE_ARTIFACT_B64"):
         extra = []
         if artifact is not None:
+            if artifact_env not in ("EVALNOISE_ARTIFACT_B64", "EVALNOISE_TOOL_CALL_B64"):
+                raise DockerError("Unsupported bounded-handoff environment variable")
             if len(artifact) > 8192:
-                raise DockerError("Verifier artifact exceeds 8192 bytes")
-            extra = ["--env", "EVALNOISE_ARTIFACT_B64=" + base64.b64encode(artifact).decode("ascii")]
+                raise DockerError(f"Bounded handoff payload for {artifact_env} exceeds 8192 bytes")
+            extra = ["--env", artifact_env + "=" + base64.b64encode(artifact).decode("ascii")]
         engine_id = (self.engine_identity or {}).get("id")
         if engine_id:
             extra += ["--label", f"io.evalnoise.engine={engine_id}"]
