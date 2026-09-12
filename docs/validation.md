@@ -118,6 +118,97 @@ The published M2 commit `e8ab031` passed GitHub Actions run [`34594917203`](http
 
 This is a single remote observation on GitHub-hosted amd64 runners, so it confirms the suite is portable off this workstation but is not repeated evidence across hosts, nor a claim about the intermittency discussed above. Remote runners are a different kernel, engine version, and cgroup driver than the macOS Docker Desktop VM used for the fidelity records, and the timing figures in this document come from the local host, not from CI. The workflow also emits a non-blocking warning that `actions/checkout@v4` and `actions/setup-python@v5` target the deprecated Node.js 20 and are forced onto Node.js 24; no job failed because of it and no action was pinned or upgraded in response.
 
+## v0.4 Agent Offline Slice
+
+All records below are **offline**. No provider was contacted, no credential was read, and every ledger records `provider_requests_sent: 0` and `actual_charged_micros: 0`. Host: the same macOS Docker Desktop VM, Docker Server 29.1.5, Python 3.14.
+
+### Deterministic Replay
+
+Runs `agent-offline-12116cd6a8cf` and `agent-offline-c1be0f804675`, both `evalnoise run experiments/agent-offline.json --trust-config`, both `completed`, 2 of 2 trials recorded, both `passed` with a positive trusted verdict.
+
+Comparing status, execution status, final artifact, and every step's tool calls, observation, metrics, request digest, admission reservation, and provider attempt outcomes across the two runs gives **identical evidence** (`True`), digest `e751946b0f6dca6745301dec06883cfc`. Both produced task contract hash `d64abcf816784e33…`, 6 admitted calls, 8 provider attempts, and 12 micro-USD of *simulated* reported cost.
+
+Each trial ran the recorded sequence `list_files -> read_file -> final_answer`, so two tool containers plus one host-side answer per trial, four step containers per run under `agent/trials/`. Step 2 replayed a recorded `transient_error` before its `ok`, so the retry path is exercised rather than merely declared. Seed 42 answered 5 and seed 43 answered 14, each confirmed by the independent `sum-v1` verifier.
+
+Run IDs differ between the two runs, as do timestamps and container identities; those are excluded from the comparison by design. Determinism is a property of the replay and the fixture, **not** a claim about any real provider.
+
+### Fixture Correctness, Not An Impossibility Claim
+
+Run `agent-offline-lazy-179fb16efb8a` replays `cassettes/offline-lazy-v1.json`, whose scripted policy answers immediately without reading the workspace. Result: 2 of 2 trials `verification_failed`, recorded pass rate 0.0, one step recorded per trial, **zero step containers created**, and the trusted verifier reporting `Incorrect sum or payload schema`.
+
+**What this shows:** the loop genuinely depends on the tool observations, the cassette key covers the whole transcript, and a wrong answer is caught by independent verification rather than by the candidate. **What this does not show:** that the answer is impossible to reach without tools. The fixture answer is a sum of squares up to a seed-derived limit and is arithmetically derivable once that limit is known. Nothing here is evidence about model capability, and `tools/` and `cassettes/` are reviewed in-repo fixtures, not a public benchmark dataset.
+
+### Budget, Recovery, And Isolation
+
+These are covered by tests rather than by a standalone recorded run, and each is listed in [the testing notes](testing.md):
+
+- Plan-level admission refuses before the run directory exists and before any container is created; the fake engine records zero `create` calls and the output directory is empty.
+- Worst-case admission refuses a call whose *observed* cost would have fitted, and a shared ledger under eight concurrent workers admits exactly its ceiling and refuses the rest.
+- Ceilings are enforced against committed figures, so an outstanding reservation blocks a second admission and a settled call releases its unused remainder. Eight concurrent workers cannot pass the output-token ceiling, and six concurrent workers driving only *failed* calls cannot pass the attempt ceiling.
+- Provider attempts are reserved before the call, so an exhausted retry sequence settles into the ledger instead of escaping it; a hard provider error releases its whole reservation.
+- Recorded usage above its reservation is retained in both the ledger and the step metrics with an explicit `accounting_errors` entry, and the run stops spending rather than discarding the observation. A failed call reports the same verdict, and an overrun on either path ends the trial as `budget_exhausted` with reason `usage_overran_reservation` while preserving the original provider cause in the detail.
+- The ledger publishes no field claiming to hold a retained worst-case total. While a call is outstanding `committed.cost_micros` is strictly above the observed cost; once settled the two are equal, which is asserted in both states.
+- No float appears anywhere in a ledger record; a recursive walk asserts it.
+- Fake `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` values in the environment appear in no container argv, trial record, manifest, or report, and neither do their names.
+- A full replay completes with `socket.socket` patched to raise.
+- Real step containers echo `NetworkMode: none` and pass the enforcement audit; a real tool container run with `--network none` reports a failed connection from inside itself.
+- A `SIGKILL`ed agent run leaves an owned orphan whose stage is `agent_step`, which `diagnose` finds among the plan-derived names and `cleanup --confirm` removes by exact ID, leaving the manifest status untouched.
+
+### Test Suite
+
+Local: **293 tests, 43.7-46.3 s, no skips and no failures** with `EVALNOISE_DOCKER_TESTS=1` against all four images and a `python3.11` on `PATH`. Without those, 293 tests with 21 skipped. v0.3 was 199 tests. The 199 M0-M2 tests are unchanged in semantics; the only edits to an existing test file were adding `**kwargs` to a fake backend's `create`, passing the new `max_attempts` argument to `Ledger.admit_call`, and adding one `Docker.call` diagnostics regression described below.
+
+The unit suite was additionally run under **real CPython 3.11.13, 3.12.14, and 3.14.2**: 292 tests passing on each at the time of that sweep, 22 skipped on 3.11 because its tokenizer predates PEP 701 and the detector self-test does not apply there. That three-interpreter sweep predates the 293rd test and **has not been repeated**; the added test is interpreter-independent, but this paragraph is a record of what was run, not an inference about what would run.
+
+#### A Known, Undiagnosed Docker-Suite Intermittency
+
+**The intermittency is real, is not fixed, and is not claimed to be fixed.** The full Docker suite has now failed on **three separate occasions**.
+
+The **first two** reported `FAILED (errors=2)`, once before and once after the budget reconciliation work. On neither occasion was the traceback captured before the run cleared, so both remain **entirely unattributed** — the error count of exactly two is the only characterisation available for them, and it is not evidence that they share a cause with each other or with the third.
+
+The **third was captured**, and is the only failure with a log:
+
+- The first two `test_agent_docker.py` methods errored in `setUpClass`-adjacent image resolution: `docker image inspect evalnoise-tools:local` exited **1** with `Error: No such image: evalnoise-tools:local`. **Later lookups of that same tag in the same run succeeded**, and the image was present in `docker images` before and after. A tag that is absent for two lookups and present for the rest is not explained by anything this repository controls, and **the cause is unproven**. It is *not* asserted to be a Docker Desktop image-store race, a daemon restart, or a test-ordering defect; none of those were demonstrated.
+- A **separate subcase**, the verifier-crash path, failed differently: a runtime `inspect` error, recorded alongside a **large divergence between the wall-clock and monotonic deltas** for that interval. That gap is *consistent with* the host suspending mid-run. It **does not confirm** a suspend: no host power-management event was correlated against it, and the divergence is equally consistent with severe scheduling starvation. It is recorded because the measurement exists, not because it settles anything.
+
+Because the two captured symptoms differ in both failing call and failure mode, they are **not** assumed to be one defect, and neither is assumed to explain the earlier unattributed pair.
+
+**No mitigation was applied.** No retry, no wait loop, no image pre-warm, and no relaxed assertion was added anywhere in response to this. Weakening a test until it stops reporting a real environmental fault would destroy the only signal available. The one change made is diagnostic and non-behavioural: `Docker.call` now reports the process exit code and substitutes an explicit `no stderr diagnostics` marker for empty stderr, so a future recurrence cannot produce the unattributable bare `docker <verb> failed: ` that made the first two occurrences unanalysable. That is covered by a regression test confirmed to fail against the prior message.
+
+Counting only full Docker runs since the third failure, the suite has passed **two consecutive runs**, both recorded for this commit: 292 tests in 44.2 s before the regression test was added, and **293 tests in 44.1 s** after, each with no skips and no failures. Two passes are not a diagnosis and are not offered as one. Treat the Docker suite as carrying a known, uncharacterised intermittency on the order of **three failures across roughly sixteen full runs**, always in the real-container tests and never in the unit tests. Capture the log if it recurs; a cleared terminal is why two of the three are permanently unattributable.
+
+### Report Browser Inspection
+
+The generated agent report was opened in a browser and inspected at 1440 px desktop and 390 px mobile. The **Agent provenance and budget** section rendered at both widths with no horizontal overflow, no clipped table content, and no browser console errors, and the no-provider-request notice and the tool-call chain were visible.
+
+That inspection was performed against run `agent-offline-dc795cea69b1`, whose report was generated **before** the misnamed `worst_case_admitted_micros` ledger field was removed. That run directory is retained unedited rather than rewritten, because a persisted manifest is evidence. The removal does not invalidate the inspection: the field occurred exactly twice in that report and both occurrences were inside collapsed `<pre>` blocks, which was verified by character offset against the parsed `<pre>` ranges, and it never appeared in a table cell. The visible layout that was checked is therefore unchanged. **No browser inspection has been performed on the post-fix reports**, and the newer runs are recorded on their JSON evidence alone. The post-fix report for run `agent-offline-12116cd6a8cf` is the one queued for that inspection; until it is actually opened and checked at both widths, this section makes no rendering claim about it.
+
+### Evidence Defects Found And Fixed
+
+Two v0.4 evidence defects were found in review and fixed before publication, each with a regression test confirmed to fail against the defective code:
+
+1. `budget.data()` published `worst_case_admitted_micros`, assigned from `committed_micros`. Because settling replaces a reservation with the observation, after settlement that field simply restated the observed cost under a name asserting it was a worst case. The field is removed rather than renamed; `committed` is documented as a live commitment that is neither a peak record nor a spend figure. There is no compatibility cost because the field never appeared in a released schema.
+2. `Ledger.commit_failed_call` discarded the verdict `_settle` returned and hardcoded `accounting_error: None`, so on the failed-call path the step trace would claim no error while the ledger recorded one. The verdict is now propagated, and every settlement path in the agent loop routes through one helper so an accounting overrun outranks whatever else ended the call and produces `budget_exhausted` / `usage_overran_reservation` consistently.
+
+The second defect is currently **latent in normal operation**: `RecordedProvider.complete` caps attempts at the configured `max_attempts`, so a real cassette cannot overrun its attempt reservation. It is nonetheless a live contract for any future provider, so the failure is injected at the provider boundary in the tests rather than left unexercised.
+
+### Python 3.11 Compatibility Defects Found And Fixed
+
+Two publication blockers were found in v0.4 code before release, both PEP 701 syntax that only Python 3.12+ accepts while `pyproject.toml` declares `>=3.11` and CI runs 3.11:
+
+1. `report.py` used a nested same-quote f-string, `f'{row['provider_s_total']:.3f}'`. Real 3.11 reports `SyntaxError: f-string: unmatched '['`.
+2. `report.py` used a backslash inside a replacement field, `{agent_rows or '<tr><td colspan=\"9\">…'}`. Real 3.11 reports `SyntaxError: f-string expression part cannot include a backslash`.
+
+**`ast.parse(source, feature_version=(3, 11))` detected neither.** It was tested directly against both constructs and against the offending file, and accepted all of them, because the 3.12+ tokenizer handles f-strings before `feature_version` applies. That approach is a false negative and is not used. The tokenizer-based detector in `test_compat.py` catches both, and a real 3.11 interpreter is invoked when available; the tokenizer heuristic alone caught only the first defect, and the real interpreter is what surfaced the second.
+
+Two regression tests pin the five v0.3 configuration digests and the three v0.3 `verified.json` contract hashes, recorded from the v0.3 tree at commit `c8ea9ca`, because v0.4 adds optional fields that must never enter a hash when unset.
+
+**No remote CI run exists for v0.4 yet.** The workflow now builds `evalnoise-tools:local` and compiles `tools` and `scripts`, but a workflow file is not evidence that CI has run.
+
+### v0.4 Remaining Gaps
+
+The full M3 gate is **open**. Not validated: any real provider call, real retry, timeout, or rate-limit attribution, a price table against an actual invoice, a public reviewed task subset, stateful or multi-tool turns, and a Harbor environment adapter. Provider latency in these records is a cassette lookup and is not a latency measurement. The budget ledger is synthetic and its prompt estimate is a character heuristic, so it must not be relied on as a spending control for a real provider.
+
 ### Remaining Gaps
 
 An exited container `evalnoise-e0a8eb826040-stream` from an earlier aborted session predates this work and was left in place: its run directory no longer exists, so no manifest can authorise the ownership-checked cleanup path, and removing it by hand would be exactly the unscoped sweep this project refuses. Beyond that, an engine query after testing found no EvalNoise-labelled containers from any run recorded here.
