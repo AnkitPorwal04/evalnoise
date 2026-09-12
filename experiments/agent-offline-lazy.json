@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "name": "agent-offline-lazy",
+  "seed": 42,
+  "repeats": 2,
+  "provider": {
+    "kind": "recorded",
+    "cassette": "cassettes/offline-lazy-v1.json"
+  },
+  "budget": {
+    "max_calls": 16,
+    "max_attempts": 32,
+    "max_tool_steps": 16,
+    "max_input_tokens": 200000,
+    "max_output_tokens": 20000,
+    "max_cost_micros": 100000,
+    "prices": {
+      "fixture/sum-reader-v1": {
+        "input_micros_per_mtok": 300,
+        "output_micros_per_mtok": 1500
+      }
+    }
+  },
+  "tasks": [
+    {
+      "id": "read-and-sum",
+      "image": "evalnoise-tools:local",
+      "command": [
+        "python",
+        "/opt/tools/tool.py"
+      ],
+      "agent": {
+        "name": "bounded-tool-loop",
+        "version": "loop-v1",
+        "model": "fixture/sum-reader-v1",
+        "max_steps": 4,
+        "max_attempts": 3,
+        "parameters": {
+          "max_output_tokens": 256,
+          "temperature": 0,
+          "top_p": 1
+        }
+      },
+      "verifier": {
+        "image": "evalnoise-verifier:local",
+        "command": [
+          "python",
+          "/opt/verifier/verifier.py"
+        ],
+        "version": "sum-v1",
+        "cpus": 1,
+        "memory_mb": 128,
+        "timeout_s": 5
+      }
+    }
+  ],
+  "profiles": [
+    {
+      "id": "standard",
+      "cpus": 1,
+      "memory_mb": 128,
+      "timeout_s": 10
+    }
+  ]
+}
