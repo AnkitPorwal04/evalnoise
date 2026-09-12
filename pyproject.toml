@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evalnoise"
-version = "0.3.0"
+version = "0.4.0"
 description = "Reproducible infrastructure-sensitivity experiments for evaluation workloads"
 requires-python = ">=3.11"
 dependencies = []
