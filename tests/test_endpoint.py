@@ -175,6 +175,24 @@ class EndpointResolutionTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][:3],
                          ["docker", "--host", endpoints.DEFAULT_SOCKETS[0]])
 
+    def test_failed_call_reports_the_exit_code_and_never_an_empty_diagnostic(self):
+        # A nonzero exit with empty stderr previously raised a message ending in a bare
+        # ": ", which is unattributable in a captured log.
+        backend = Docker(endpoints._endpoint("default", "default", endpoints.DEFAULT_SOCKETS[0]))
+        for code, stderr, expected in (
+                (1, "Error: No such image: evalnoise-tools:local",
+                 "docker image failed (exit 1): Error: No such image: evalnoise-tools:local"),
+                (125, "   \n", "docker image failed (exit 125): no stderr diagnostics"),
+                (137, "", "docker image failed (exit 137): no stderr diagnostics")):
+            with self.subTest(code=code):
+                with patch("subprocess.run") as run:
+                    run.return_value.returncode = code
+                    run.return_value.stdout = ""
+                    run.return_value.stderr = stderr
+                    with self.assertRaises(DockerError) as raised:
+                        backend.call(["image", "inspect", "evalnoise-tools:local"])
+                self.assertEqual(str(raised.exception), expected)
+
     def test_docker_env_is_snapshotted_and_stripped_for_children(self):
         with patch.dict(os.environ, {"DOCKER_CONTEXT": "at-init", "PATH": os.environ["PATH"]}):
             backend = Docker(endpoints._endpoint("DOCKER_HOST", None, "unix:///x.sock"))

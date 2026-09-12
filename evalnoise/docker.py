@@ -85,7 +85,9 @@ class Docker:
         except (OSError, subprocess.TimeoutExpired) as error:
             raise DockerError(f"docker {args[0]} unavailable or timed out: {error}") from error
         if result.returncode:
-            raise DockerError(f"docker {args[0]} failed: {result.stderr[-2000:].strip()}")
+            raise DockerError(
+                f"docker {args[0]} failed (exit {result.returncode}): "
+                f"{result.stderr[-2000:].strip() or 'no stderr diagnostics'}")
         return result.stdout + result.stderr if merge else result.stdout
 
     def _ambient(self, args, timeout=20):
