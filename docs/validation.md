@@ -219,6 +219,11 @@ The full M3 gate is **open**. Not validated: any real provider call, real retry,
 
 ### Remaining Gaps
 
-An exited container `evalnoise-e0a8eb826040-stream` from an earlier aborted session predates this work and was left in place: its run directory no longer exists, so no manifest can authorise the ownership-checked cleanup path, and removing it by hand would be exactly the unscoped sweep this project refuses. Beyond that, an engine query after testing found no EvalNoise-labelled containers from any run recorded here.
+Two exited containers are on the engine and were both left in place, because neither has a surviving run directory, so no manifest can authorise the ownership-checked cleanup path and removing either by hand would be exactly the unscoped sweep this project refuses.
+
+- `evalnoise-e0a8eb826040-stream`, exit 0, from an earlier aborted session that predates this work.
+- `evalnoise-638ff5d52397-r000-p00-t000-verify`, exit 1, created during the v0.4 working period and carrying this workstation's engine, owner, and run labels. Its name and nonzero exit are **consistent with** the verifier-crash subcase of the captured suite failure described above, but run `638ff5d52397` left no directory, so the association is **not proven** and is not asserted. `diagnose` reports nothing for it, which is correct: without a manifest there is no plan to derive expected names from. It is recorded here rather than removed.
+
+Beyond those two, an engine query after testing found no EvalNoise-labelled containers from any run recorded here.
 
 Still not validated: native-Linux and rootless hosts, repeated overhead records across hosts or intervals, any statistical characterisation of sampler cost, interference from *other* tenants sharing the daemon, hostile-code isolation, repository-file artifact transfer, and browser rendering beyond the single engine and two viewports recorded above. No claim of perfect reliability is made.
