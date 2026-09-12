@@ -1,0 +1,35 @@
+{
+  "entries": [
+    {
+      "request_sha256": "7ea74d36560d3e67c15d1e12b55aa5643e8994d37a7ebbf07300873d78e5d272",
+      "response": {
+        "response_id": "fixture-7ea74d36",
+        "stop_reason": "tool_call",
+        "text": null,
+        "tool_call": {
+          "arguments": {
+            "sum_of_squares": 0
+          },
+          "function_name": "final_answer",
+          "tool_call_id": "c1"
+        },
+        "usage": {
+          "cache_tokens": 0,
+          "completion_tokens": 52,
+          "prompt_tokens": 142
+        }
+      }
+    }
+  ],
+  "kind": "recorded",
+  "model": "fixture/sum-reader-v1",
+  "note": "Recorded offline from a deterministic scripted policy over the same pure tool functions the container image runs. No provider was contacted and nothing was charged. Token counts are synthetic. This is a reviewed in-repo fixture, not a public benchmark dataset and not evidence about any model.",
+  "protocol": "agent-step-v1",
+  "provider_label": "scripted-lazy-policy",
+  "recorded_at": "fixture",
+  "schema_version": 1,
+  "seeds": [
+    42,
+    43
+  ]
+}
