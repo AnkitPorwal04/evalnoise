@@ -4,7 +4,11 @@
 
 EvalNoise is a research-driven experiment runner for controlled resource-profile comparisons. It preserves the configuration, randomized schedule, image identity, container state, bounded logs, missing trials, and descriptive comparisons in an offline experiment notebook.
 
-**Status: v0.3 measurement fidelity on top of the v0.2 verification foundation, not a finished agent-evaluation platform.** The fixtures are scripted calibration workloads. They validate measurement plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
+**Status: v0.4 adds an offline agent slice on top of v0.3 measurement fidelity. It is not a finished agent-evaluation platform and the full M3 gate is open.** The fixtures are scripted calibration workloads and a small reviewed in-repo agent fixture. They validate plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
+
+v0.4 adds a bounded tool/action loop whose model turn runs in the runner process and whose every tool action runs as a fresh hardened container with `--network none`, keeping the existing enforcement audit, telemetry, ownership labels, and cleanup rules. Model responses come from a **recorded cassette keyed by the full canonical request**, including the whole message history, so a replay cannot skip a tool call; a miss is a hard error, never a generated reply. A **synthetic integer micro-USD ledger** admits every provider call and tool container in advance and records `provider_requests_sent: 0` and `actual_charged_micros: 0`, because nothing is sent.
+
+**There is no live provider client and no credential lookup in this codebase.** A real-provider run needs explicit authorization and budget and has not happened. The agent fixture answer is arithmetically derivable once its seed-derived limit is known, so no claim is made that it is unreachable without tools, and none about model capability.
 
 v0.3 adds a pinned Docker endpoint and daemon identity, raw bounded Engine telemetry over a **local Unix socket only**, cgroup throttling counters recorded without invented zeros, a request-echo enforcement audit, an optional reviewed cgroup probe, optional CPU affinity, advisory single-runner coordination for one local user and engine, and read-only recovery diagnosis with narrowly scoped cleanup. **Sampling stays opt-in and off by default:** the recorded sampler-on/sampler-off contrast differs by less than the harness can resolve, which establishes no overhead figure in either direction rather than showing there is none.
 
@@ -67,6 +71,15 @@ Optional raw Engine telemetry requires a local Unix socket endpoint. Set `sample
 
 Sampling is **off by default**. Run `sampler-overhead-e60d93977bd0` recorded 20 of 20 paired trials, a `sampler-off` successful median of 3.561533 s against a `sampler-on` median of 3.5607595 s over 10 pairs each, with 40 samples received, 20 retained, and zero leaked reader threads. The two medians differ by under a millisecond and the sampled arm is nominally the faster one, so the contrast resolves no overhead in either direction. It is a descriptive record of one run on one host with no statistical test attached, and deliberately not a zero-overhead claim. Both collectors are bounded and cancel before container removal; a collector that cannot be stopped is detached and reported as `thread_leaked` rather than being allowed to change a workload outcome or delay cleanup.
 
+Run the offline agent slice. Nothing is sent and nothing is charged:
+
+```sh
+docker build -t evalnoise-tools:local tools
+python3 -m evalnoise run experiments/agent-offline.json --trust-config
+```
+
+Each trial replays `list_files -> read_file -> final_answer` from a recorded cassette, runs the two tool calls as separate hardened containers, and hands the final answer to the existing trusted `sum-v1` verifier. The report states plainly that no provider request was made and prints the simulated usage beside the zero actual charge. Regenerate the cassettes with `scripts/record_cassette.py` whenever the tool surface, prompts, or agent parameters change.
+
 Check what limits the engine really applied, using a separate reviewed image rather than touching the workload:
 
 ```sh
@@ -119,6 +132,7 @@ The report's pass rate is clean final passes divided by **recorded** trials, inc
 - [Independent verification](docs/verification.md): protocol, trusted verifier authoring, lifecycle, and scope.
 - [Security and operations](docs/security.md): trust boundary, containment, cleanup, and sharing.
 - [Roadmap](docs/roadmap.md): milestone gates for the larger platform.
+- [M3 offline slice plan](docs/m3-plan.md): the agent loop, the Harbor decision, and the open gate.
 - [Testing](docs/testing.md): verification commands and evidence requirements.
 - [Local validation record](docs/validation.md): actual test results, experiment IDs, and unverified environments.
 - [Contributing](CONTRIBUTING.md): how to extend the project without weakening measurement integrity.
@@ -127,14 +141,14 @@ The report's pass rate is clean final passes divided by **recorded** trials, inc
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 -m compileall -q evalnoise probes
+python3 -m compileall -q evalnoise probes tools scripts
 EVALNOISE_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 ```
 
-v0.3 runs 199 tests: 183 unit and 16 real Docker methods, with no skips once the opt-in variable is set. The final command creates and removes real containers using the previously built images, removes only containers it created, and never prunes. Run it sequentially and alone — a second concurrent run is refused by the engine lock by design. Read its stderr for thread tracebacks rather than trusting the exit code, because a telemetry reader thread can die through `threading.excepthook` without failing the run. Check [GitHub Actions](https://github.com/AnkitPorwal04/evalnoise/actions) for the result of the specific commit; local success is not proof of remote CI success.
+v0.4 runs 293 tests: 272 unit and 21 real Docker methods, with no skips once the opt-in variable is set and a `python3.11` is on `PATH`. v0.3 ran 199; those M0-M2 tests keep their semantics. The final command creates and removes real containers using the previously built images, removes only containers it created, and never prunes. Run it sequentially and alone — a second concurrent run is refused by the engine lock by design. Read its stderr for thread tracebacks rather than trusting the exit code, because a telemetry reader thread can die through `threading.excepthook` without failing the run. Check [GitHub Actions](https://github.com/AnkitPorwal04/evalnoise/actions) for the result of the specific commit; local success is not proof of remote CI success.
 
 ## Current Limits
 
-No model/provider adapters, Harbor integration, repository/patch artifact transfer, API proxy, distributed workers, signed artifacts, statistical confidence intervals, web control plane, or multi-tenant isolation yet. Verifier input is a bounded JSON value, not an arbitrary filesystem or archive. No retries or resume. CPU quotas are not dedicated CPUs. Host caches and other workloads are uncontrolled. CLI polling and optional sampling add overhead. Timeouts are best-effort host deadlines, not real-time guarantees. Local evidence can be edited and logs may contain secrets.
+No live provider client, no credential path, no Harbor integration, no repository/patch artifact transfer, no API proxy, distributed workers, signed artifacts, statistical confidence intervals, web control plane, or multi-tenant isolation yet. Verifier and tool input is a bounded JSON value, not an arbitrary filesystem or archive. Agent tools are a fixed, stateless, read-only table with no shell and no expression evaluation, because every step is a fresh container; stateful tools are deferred. Provider retry and timeout attribution is simulated from recorded outcomes, not measured. The budget ledger is synthetic and its prompt estimate is a character heuristic, not a provider tokenizer, so it is not a spending control for a real provider. No resume. CPU quotas are not dedicated CPUs. Host caches and other workloads are uncontrolled. CLI polling and optional sampling add overhead. Timeouts are best-effort host deadlines, not real-time guarantees. Local evidence can be edited and logs may contain secrets.
 
-Measurement fidelity — engine identity, same-engine run coordination, enforcement probes, hard-kill recovery, and loaded batch ordering — is implemented and recorded in the [validation log](docs/validation.md). Next are repository-artifact tasks and agent integration, which require additional design and tests. A larger dashboard comes after those foundations, not instead of them.
+Measurement fidelity — engine identity, same-engine run coordination, enforcement probes, hard-kill recovery, and loaded batch ordering — is implemented and recorded in the [validation log](docs/validation.md). The agent offline slice is implemented and recorded there too; its full M3 gate stays open until an explicitly authorized and budgeted real-provider run, a public reviewed task subset, and measured retry attribution exist. A larger dashboard comes after those foundations, not instead of them.
