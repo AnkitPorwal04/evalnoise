@@ -85,11 +85,60 @@ def fidelity(manifest, trials):
                       "Null means not measured, never zero.")}
 
 
+def agency(manifest, trials):
+    """Agent provenance and the synthetic ledger. Simulated usage is never a real charge."""
+    agent_tasks = [task for task in manifest["config"]["tasks"] if task.get("agent")]
+    if not agent_tasks:
+        return None
+    snapshot = manifest.get("provider_snapshot") or {}
+    rows = []
+    for trial in trials:
+        agent = trial.get("agent")
+        if not agent:
+            continue
+        steps = agent.get("steps") or []
+        rows.append({
+            "id": trial["id"], "profile": trial["profile"], "task": trial["task"],
+            "status": trial["status"], "execution_status": trial.get("execution_status"),
+            "agent": f"{agent['name']}@{agent['version']}", "model": agent["model"]["name"],
+            "steps_recorded": len(steps),
+            "max_steps": agent.get("max_steps"),
+            "tool_calls": [s["tool_calls"][0]["function_name"] for s in steps if s.get("tool_calls")],
+            "termination": (agent.get("termination") or {}).get("reason"),
+            "provider_attempts": agent.get("provider_attempts"),
+            "prompt_tokens": _total([(s.get("metrics") or {}).get("prompt_tokens") for s in steps]),
+            "completion_tokens": _total([(s.get("metrics") or {}).get("completion_tokens") for s in steps]),
+            "simulated_reported_micros": _total(
+                [(s.get("metrics") or {}).get("simulated_reported_micros") for s in steps]),
+            "provider_s_total": agent.get("provider_s_total"),
+            "tool_container_s_total": agent.get("tool_container_s_total"),
+            "agent_wall_s": agent.get("agent_wall_s"),
+        })
+    return {"tasks": [task["id"] for task in agent_tasks], "trials": rows,
+            "provider": {key: snapshot.get(key) for key in
+                         ("kind", "model", "provider_label", "cassette_sha256", "entries",
+                          "path", "recorded_at", "seeds")},
+            "ledger": manifest.get("budget_ledger"),
+            "admission": manifest.get("budget_admission"),
+            "scope": ("Agent steps are host-side model turns paired with container tool actions. "
+                      "Provider time and container time are separate clock domains and are never "
+                      "summed into a container measurement. Token counts are simulated reported "
+                      "values replayed from a recorded in-repo fixture; no provider request was "
+                      "made and the actual charge is zero. This fixture is not a public benchmark "
+                      "and establishes nothing about model capability.")}
+
+
 def summarize(manifest, trials):
     if any(t.get("verifier") for t in manifest["config"]["tasks"]) and "task_contracts" not in manifest:
         raise ValueError("Verifier-enabled evidence requires task contract hashes")
+    if any(t.get("agent") for t in manifest["config"]["tasks"]) and not manifest.get("provider_snapshot"):
+        raise ValueError("Agent evidence requires a recorded provider snapshot in the manifest")
     if "task_contracts" in manifest:
-        calculated = {task["id"]: contract_hash(task, manifest["images"]) for task in manifest["config"]["tasks"]}
+        # The snapshot is the manifest's own frozen record, so a report regenerates offline
+        # without the original cassette file while a mutated cassette still fails the check.
+        snapshot = manifest.get("provider_snapshot")
+        calculated = {task["id"]: contract_hash(task, manifest["images"], snapshot)
+                      for task in manifest["config"]["tasks"]}
         if calculated != manifest["task_contracts"]:
             raise ValueError("Manifest task or image content does not match its contract hashes")
     planned = {trial["id"]: batch for batch in manifest["plan"] for trial in batch["trials"]}
@@ -136,6 +185,7 @@ def summarize(manifest, trials):
                      for task in manifest["config"]["tasks"] for profile in profiles]
     return {"run_id": manifest["run_id"], "status": manifest["status"], "profiles": profiles,
             "task_outcomes": task_outcomes, "fidelity": fidelity(manifest, trials),
+            "agency": agency(manifest, trials),
             "comparisons": pairs, "recorded_trials": len(trials), "planned_trials": len(planned),
             "interpretation": "Descriptive results for this fixed workload suite, not independent population trials. No causal or statistical significance claim.",
             "latency_scope": "Container start-to-finish duration for successful trials only. Failed and missing durations are not zero. Profiles may have different successful task sets; comparing these medians alone does not establish a speedup."}
@@ -154,6 +204,11 @@ def generate(directory):
         writer.writerows(trials)
     esc = lambda value: html.escape(str(value), quote=True)
     cell = lambda value: "Not measured" if value is None else esc(value)
+    # Formatting helpers keep nested quotes out of the f-strings below: a same-quote
+    # nested f-string is PEP 701 syntax and is a SyntaxError on Python 3.11, which this
+    # project still supports and tests.
+    seconds = lambda value: "Not measured" if value is None else format(value, ".3f")
+    arrow = lambda names: " &rarr; ".join(esc(name) for name in names) or "none"
     rows = []
     for profile in summary["profiles"]:
         rate = profile["pass_rate_recorded"]
@@ -171,7 +226,7 @@ def generate(directory):
                      f"<p>{comparison['complete_pairs']} paired task/repetition observations. "
                       f"{comparison['fail_to_pass']} non-pass to pass; {comparison['pass_to_fail']} pass to non-pass. Non-passes include recorded infrastructure and verifier errors, not just incorrect answers.</p></article>")
     details = "".join(f"<details><summary>{esc(t['id'])} <b>{esc(t['status'])}</b></summary>"
-                      f"<p>Container: {esc(t['container_name'])}</p>"
+                      f"<p>Container: {esc(t['container_name'] or 'None: agent step aggregate, not a container observation')}</p>"
                       f"<pre>{esc(json.dumps({k: v for k, v in t.items() if k != 'logs'}, indent=2))}</pre>"
                       f"<h3>Bounded workload logs</h3><pre>{esc(t.get('logs', {}).get('text', 'No logs captured'))}</pre></details>" for t in trials)
     grade = summary["fidelity"]
@@ -193,6 +248,44 @@ def generate(directory):
         f"<td>{cell(row['throttled_periods_delta'])} of {cell(row['periods_delta'])}</td>"
         f"<td>{cell(row['cpu_total_ns_delta'])}</td><td>{cell(row['memory_usage_max_observed'])}</td></tr>"
         for row in grade["trials"])
+    crew = summary["agency"]
+    agent_section = ""
+    if crew:
+        ledger = crew["ledger"] or {}
+        reported = ledger.get("simulated_reported") or {}
+        # Kept out of the f-string expressions below: a backslash inside a replacement
+        # field is PEP 701 syntax and a SyntaxError on Python 3.11.
+        empty_agent_row = '<tr><td colspan="9">No agent trials recorded.</td></tr>'
+        agent_rows = "".join(
+            f"<tr><th>{esc(row['id'])}</th><td>{esc(row['agent'])}<br><small>{esc(row['model'])}</small></td>"
+            f"<td>{esc(row['status'])}<br><small>{esc(row['execution_status'])}</small></td>"
+            f"<td>{row['steps_recorded']} / {cell(row['max_steps'])}</td>"
+            f"<td>{arrow(row['tool_calls'])}</td>"
+            f"<td>{esc(row['termination'])}</td>"
+            f"<td>{cell(row['prompt_tokens'])} in / {cell(row['completion_tokens'])} out"
+            f"<br><small>{cell(row['provider_attempts'])} attempts</small></td>"
+            f"<td>{cell(row['simulated_reported_micros'])} &micro;USD simulated</td>"
+            f"<td>{seconds(row['provider_s_total'])} provider"
+            f"<br>{seconds(row['tool_container_s_total'])} tools</td></tr>"
+            for row in crew["trials"])
+        agent_section = (
+            f"<h2>Agent provenance and budget</h2>"
+            f"<p class=\"notice\"><strong>No provider request was made.</strong> "
+            f"Responses were replayed from the recorded in-repo fixture cassette "
+            f"<code>{esc(crew['provider'].get('path'))}</code> "
+            f"(sha256 {esc(str(crew['provider'].get('cassette_sha256'))[:16])}&hellip;, "
+            f"{cell(crew['provider'].get('entries'))} entries). Simulated reported usage is "
+            f"{cell(reported.get('prompt_tokens'))} input and {cell(reported.get('completion_tokens'))} "
+            f"output tokens priced at {cell(reported.get('cost_micros'))} micro-USD from the declared "
+            f"table; the actual amount charged is "
+            f"{cell(ledger.get('actual_charged_micros'))} micro-USD.</p>"
+            f"<p>{esc(crew['scope'])}</p>"
+            f"<div class=\"scroll\"><table><thead><tr><th>Trial</th><th>Agent / model</th><th>Status</th>"
+            f"<th>Steps</th><th>Tool calls</th><th>Termination</th><th>Simulated tokens</th>"
+            f"<th>Simulated cost</th><th>Clock domains (s)</th></tr></thead><tbody>"
+            f"{agent_rows or empty_agent_row}</tbody></table></div>"
+            f"<details><summary>Inspect the synthetic budget ledger</summary>"
+            f"<pre>{esc(json.dumps(ledger, indent=2))}</pre></details>")
     identity_banner = (f"<p class=\"notice\"><strong>Engine identity warning.</strong> "
                        f"{esc(grade['engine_identity_warning'])}</p>"
                        if grade["engine_identity_warning"] else "")
@@ -209,6 +302,7 @@ def generate(directory):
 <p><small>{esc(summary['latency_scope'])} Effective sampling intervals are listed per profile in the measurement fidelity section. CPU limits are not reservations. Memory swap is disabled.</small></p>
 <h2>Paired outcome changes</h2><div class="comparisons">{''.join(cards) or '<p>Only one profile: no comparison.</p>'}</div>
 <h2>Task contracts and outcomes</h2><p>Execution success is not correctness. Verified tasks require a successful trusted verifier and a valid positive verdict. Verifier failures are not incorrect answers. Durations above describe workloads only, excluding verification.</p><div class="scroll"><table><thead><tr><th>Task</th><th>Profile</th><th>Contract</th><th>Outcomes</th></tr></thead><tbody>{task_rows}</tbody></table></div>
+{agent_section}
 <h2>Measurement fidelity</h2>{identity_banner}<p>{esc(grade['scope'])}</p>
 <p><small>Endpoint: {cell(grade['endpoint_source'])} / {cell(grade['endpoint_scheme'])}. Telemetry path: {cell(grade['telemetry_source'])}{'' if not grade['telemetry_unavailable_reason'] else ' (' + esc(grade['telemetry_unavailable_reason']) + ')'}. Pinned Engine API: {cell(grade['api_version_pinned'])}.</small></p>
 <div class="scroll"><table><thead><tr><th>Profile</th><th>Sampling</th><th>CPU affinity</th><th>Telemetry source</th><th>Samples received / retained</th><th>Trial faults</th><th>Enforcement echo</th></tr></thead><tbody>{fidelity_rows}</tbody></table></div>
