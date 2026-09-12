@@ -11,11 +11,25 @@ JSON -> strict config -> seeded plan -> engine/image preflight
      -> final manifest -> offline JSON / CSV / HTML
 ```
 
+An agent task replaces the single workload container with a bounded loop. Cassette freeze and plan-level budget admission run before the engine is contacted; the batch barrier, sequential verification, and halt-on-cleanup-failure rules are unchanged.
+
+```text
+cassette freeze -> plan budget admission -> (per trial)
+  admit call -> recorded completion -> commit usage -> validate tool call
+    -> tool container: create/start/audit/classify/logs/remove -> observation
+    -> append step -> checkpoint trial JSON -> repeat within max_steps
+  -> final_answer -> normalized artifact -> pending_verification
+  -> batch barrier -> existing trusted verifier -> finalized trial JSON
+```
+
 Image IDs are resolved once before execution. Each task/repetition pair uses the same seed across profiles. Each profile batch has a separate worker pool and finishes before the next batch starts. Concurrency is an intentional experimental setting, not transparent acceleration.
 
 ## Modules
 
 - `config.py`: strict parsing, ranges, configuration hashing, and schedule generation.
+- `provider.py`: recorded deterministic completions keyed by the full canonical request. No HTTP client, socket use, or credential lookup.
+- `budget.py`: integer micro-USD admission and a run-scoped, mutex-guarded synthetic ledger.
+- `agent.py`: the bounded tool/action loop, its fixed tool table, and ATIF-shaped step records.
 - `endpoint.py`: endpoint resolution and pinning, Engine API negotiation, bounded cancel-safe stats streaming, cgroup field availability.
 - `coordination.py`: advisory per-daemon engine lock and orphan refusal.
 - `recovery.py`: read-only diagnosis and ownership-checked cleanup.
@@ -76,6 +90,26 @@ Accepted for v0.2. Optional trusted verifier images receive bounded JSON data, n
 ## ADR 008: Stop Loading After Cleanup Failure
 
 Accepted. Any workload cleanup failure prevents verification and subsequent batches. Any verifier cleanup failure prevents further verification and batches. Pending records remain pending rather than inventing verdicts. A contract hash includes task definitions, resolved workload/verifier image IDs, and protocol identity; reports validate consistency, but hashes are not signatures or proof against coordinated artifact editing.
+
+## ADR 012: Bespoke Agent Loop, Harbor As An Export Vocabulary
+
+Accepted for v0.4. Harbor's current contract was read from its primary sources before deciding: `BaseAgent.run(instruction, environment, context)` is async and drives `BaseEnvironment.exec`; environments are pluggable with many backends; `NetworkMode` already offers `no-network`, `allowlist`, and `public`; and the default model path resolves provider credentials into the agent's environment or proxies them over a bridge.
+
+Adopting Harbor now would mean either running trials through Harbor's environment layer or writing an EvalNoise-backed `BaseEnvironment`. Both are legitimate and the second remains a reasonable future path. Neither is required to deliver a bounded tool loop with independent verification, and both carry review and test burden plus a dependency and Python-floor delta against a runner that currently declares no dependencies. **The decision is bounded integration scope for this slice, not a claim that Harbor must replace the lifecycle, that its dependencies expose a server, or that it is unsuitable.**
+
+What is adopted for free is Harbor's ATIF field vocabulary for steps, tool calls, usage, and agent identity, so a later one-way exporter is a mapping rather than a rewrite. Nothing imports Harbor. Revisit when a real-provider budget is authorized.
+
+## ADR 013: Host-Side Model Boundary, Container-Side Tools
+
+Accepted for v0.4. The model turn happens in the runner process. Every tool action is a fresh hardened container created through the ordinary `trial()` path, so each step keeps the enforcement audit, telemetry, classification, ownership labels, and cleanup rules of a normal workload, and no measured container receives network access or credentials. The bounded handoff reuses the `json-env-v1` transport with a distinct `EVALNOISE_TOOL_CALL_B64` variable; the variable name is restricted to a two-value allowlist at the Docker boundary.
+
+Because each step is a fresh container, tools are pure functions of `(seed, tool_call)` and the tool table is fixed with no expression evaluation, shell, or template execution. Stateful tools would need `docker exec` or a persistent container, which breaks the pre-start enforcement audit, and are deferred behind their own review. An agent trial therefore aggregates steps and records `container_duration_s: null`: it is not a container observation and must not be presented as one.
+
+## ADR 014: Recorded Provider And Synthetic Integer Budget
+
+Accepted for v0.4. A cassette entry is keyed by the SHA-256 of the full canonical request, including the entire message history with every prior observation verbatim, so a replay cannot skip a tool call or accept a different observation. A miss is a hard error; the provider never generates, interpolates, or selects a nearest entry. The cassette is frozen and hashed at preflight, its digest enters the task contract hash, and the manifest keeps a snapshot so reports regenerate offline without the file while a mutation is still refused.
+
+All money is integer micro-USD with ceiling division, so no rounding path can admit more than the declared ceiling. Prices are declared in the configuration because a provider's price list cannot be verified offline. Admission is worst case and happens before the provider call and before the tool container; plan admission runs before the engine is touched. The ledger is run-scoped and mutex-guarded so profile concurrency cannot over-admit. Ceilings are enforced against a committed figure that settles back to the observed one, so the ledger publishes no field claiming to be a retained worst-case total: after settlement such a figure would simply restate the observation under a misleading name. Every settlement path returns its own verdict, and an accounting overrun outranks whatever else ended the call, so the ledger, the step trace, and the trial status always agree. Simulated reported usage is recorded separately from `actual_charged_micros`, which is zero in this slice because nothing is sent.
 
 ## Reliability Boundaries
 

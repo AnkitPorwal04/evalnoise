@@ -14,6 +14,12 @@ v0.3 adds two optional profile fields. `cpuset_cpus` is a `--cpuset-cpus` mask g
 
 Profile fields: `id`, `cpus` (0.1 to 64), `memory_mb` (16 to 65536, integer MiB), `timeout_s` (0.1 to 3600); optional `concurrency` (1 to 16, default 1), `cpuset_cpus`, `sample_interval_s`. These syntactic maxima are not promises that the current engine can support the profile. Effective shared-host capacity remains an operator responsibility.
 
+v0.4 adds optional root `provider` and `budget` blocks and an optional task `agent` block. `provider` requires `kind` (only `recorded`) and a `cassette` path that must be relative, free of `..`, at most four components, and resolve inside the configuration file's directory. `budget` requires integer `max_calls`, `max_attempts`, `max_tool_steps`, `max_input_tokens`, `max_output_tokens`, `max_cost_micros`, and a `prices` table of 1 to 20 models with integer `input_micros_per_mtok` and `output_micros_per_mtok`. All money is integer micro-USD; there is no float path.
+
+`agent` requires `name`, `version`, `model`, `max_steps` (1 to 20), and `parameters`, with optional `max_attempts` (1 to 5, default 1). Model IDs match `[a-z0-9][a-z0-9._/-]{0,63}`. `parameters` is a closed whitelist of `max_output_tokens` (required) plus optional `temperature` and `top_p`; no environment, credential, URL, or free-form field is accepted. An agent task must also declare a `verifier`, because a candidate must never grade its own answer, and must have a declared price and a root provider and budget. For an agent task, `image` and `command` describe the tool container.
+
+Because recovery enumerates every expected container name from the plan, an experiment is limited to 10,000 planned containers as well as 10,000 planned trials. An unset `agent`, `provider`, or `budget` is omitted from the configuration and contract hashes, so v0.3 digests are unchanged.
+
 ## Artifact Directory
 
 `runs/<experiment-name>-<random-run-id>/` contains:
@@ -33,6 +39,12 @@ v0.3 trials add `telemetry_source` (`engine_stream`, `cli_snapshot`, or `disable
 
 `summary.json` gains a `fidelity` block with the same evidence: per-profile effective sampling interval and its source, CPU affinity, telemetry sources, received and retained totals, error, truncation and leak counts, enforcement audit counts, per-trial rows, and the engine identity warning. Absent measurements are null there too.
 
+v0.4 manifests add `provider_snapshot` (kind, protocol, model, cassette path and SHA-256, entry count, provider label, recorded seeds, and a scope note), `budget_admission` (the planned provider calls and tool containers accepted before the run started), and `budget_ledger` written at the end of the run. The ledger records declared limits, the price table, calls admitted, provider attempts, tool steps admitted, simulated reported token counts and their priced `cost_micros`, a `committed` block, `actual_charged_micros`, `provider_requests_sent`, every refusal with its reason, and every `accounting_errors` entry. In the offline slice `actual_charged_micros` and `provider_requests_sent` are always zero: no request leaves the host.
+
+`committed` holds `input_tokens`, `output_tokens`, `cost_micros`, `attempts`, and `calls_outstanding`. It is the **live commitment** that every ceiling is enforced against: a worst-case reservation for each call still in flight plus the observed figures for each settled call. Because settling replaces a reservation with what was observed, `committed.cost_micros` equals the observed simulated cost once nothing is outstanding. **It is therefore not a peak-worst-case record and not a spend figure**, and there is deliberately no separate "worst case admitted" field, because after settlement such a field would restate the observed total under a name that claims otherwise. A prompt estimate is a local character heuristic, not a provider tokenizer, and is not a guarantee about any real provider's billed cost.
+
+v0.4 agent trials record `measurement_kind: "agent_step_aggregate"` with `container_name` and `container_duration_s` null, because an agent trial has no parent container and must not impersonate one. Their `agent` block holds the protocol, agent name and version, model name and provider label, parameters, bounds, tool image ID, `steps`, `termination`, `final_artifact`, `provider_attempts`, and the separate clock domains `provider_s_total`, `tool_container_s_total`, and `agent_wall_s`. Each step uses Harbor's ATIF field names: `step_id`, `source`, `timestamp`, `model_name`, `message`, `tool_calls`, `observation`, `metrics`, `llm_call_count`, and `extra`. `metrics` carries `prompt_tokens`, `completion_tokens`, `cache_tokens`, `simulated_reported_micros`, and `price_source`. `extra` carries the request digest, the admission reservation, every provider attempt outcome, and the complete raw tool container trial record, which is also persisted under `agent/trials/<trial-id>-sNN.json`. Tool failures retain that raw record rather than collapsing to a message.
+
 New manifests include `task_contracts`, `measurement_kind`, and `verification_schedule`. Each new trial includes `contract_sha256` and `execution_status`. Verified trials retain the available `artifact` and `verification` evidence (version, protocol, nested trial, accepted verdict or error), plus `verification_finished_at`; failures before a stage omit evidence that was never produced. Hashes are recomputed/checked when present; older M0 manifests without them remain readable.
 
 Per-trial files are the source of truth for recorded counts when rebuilding. Missing files remain missing observations. The reporter refuses duplicate, unexpected, or task/profile/repetition-mismatched records. Artifacts are trusted local inputs, not a public untrusted-upload format; comprehensive hostile-artifact schema validation is future work.
@@ -44,6 +56,14 @@ Per-trial files are the source of truth for recorded counts when rebuilding. Mis
 `pending_verification`: successful execution awaiting independent verification; not a pass and excluded from complete paired contrasts.
 
 `verification_failed`: valid negative trusted verdict. `artifact_error`: missing/invalid candidate artifact. `verifier_error`: verifier process/protocol/cleanup failure, not an incorrect-answer verdict. See the separate `execution_status` and nested verifier record.
+
+`agent_incomplete`: a durable checkpoint written before and between agent steps. It is never a final outcome of a completed run; after SIGKILL it is the honest record that the loop was interrupted, and no verdict is invented for it.
+
+`agent_error`: the bounded loop failed. The `agent.termination.reason` distinguishes `provider_error`, `provider_attempts_exhausted`, `invalid_tool_call`, `invalid_final_artifact`, `no_tool_call`, `tool_container_failed`, `tool_cleanup_failed`, `observation_protocol_error`, and `observation_too_large`. This is not an incorrect answer and not a workload exit-code failure.
+
+`budget_exhausted`: admission refused a provider call or a tool container. Never a pass, and the verifier is never launched.
+
+`step_limit_reached`: the loop ended without a final answer inside `max_steps`. Not a pass and not an incorrect answer.
 
 `workload_failed`: exited with a different code; not an inferred model reasoning failure.
 
