@@ -48,7 +48,7 @@ EVALNOISE_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 python3 -m compileall -q evalnoise probes tools scripts
 ```
 
-That discovery is now 359 tests: 338 unit and 21 real Docker methods. Read the summary carefully: the first command reports `Ran 359 tests ... OK (skipped=21)`, which means **338 tests executed and passed**, not 359. The 21 skips are exactly the opt-in Docker methods, and they execute only under `EVALNOISE_DOCKER_TESTS=1` with all four images built. Published v0.4 was 293; the 66 added since are `test_subscription.py`. At v0.3 it was 199.
+That discovery is now 359 tests: 338 unit and 21 real Docker methods. Read the summary carefully: the first command reports `Ran 359 tests ... OK (skipped=21)`, which means **338 tests executed and passed**, not 359. Those 21 skips are exactly the opt-in Docker methods, and they execute only under `EVALNOISE_DOCKER_TESTS=1` with all four images built. Expect **22** skips instead wherever no `python3.11` is on `PATH`, which includes every CI job: the extra one is the real-interpreter compile check, and it has never executed in CI. Published v0.4 was 293; the 66 added since are `test_subscription.py`. At v0.3 it was 199.
 
 Measured on this workstation at the commit that added the blocked-artifact regressions: `Ran 359 tests in 15.5s`, `OK (skipped=21)`, with `python3 -m compileall -q evalnoise probes tools scripts` clean under both the development interpreter and a real `python3.11`. The Docker suite was not run for that commit, so nothing here claims those 21 methods passed at it. Run the Docker job sequentially and alone, never beside another measurement, because the engine lock will otherwise refuse one of them by design.
 

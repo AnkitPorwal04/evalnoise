@@ -213,6 +213,16 @@ Job times were 5.0 s (3.11), 8.8 s (3.12), 7.9 s (3.13), 7.7 s (3.14), and 65.7 
 
 This is a single remote observation on GitHub-hosted amd64 runners. It confirms the suite is portable off this workstation; it is **not** independent evidence about the intermittency recorded above, which has only ever been observed locally, and one green remote run is not a sample. The workflow again emitted the non-blocking warning that `actions/checkout@v4` and `actions/setup-python@v5` target the deprecated Node.js 20 and are forced onto Node.js 24; no job failed because of it and no action was pinned or upgraded in response.
 
+### Subscription Preflight Remote CI
+
+Commit `26f582f`, which adds `codex-check` and its suite, passed GitHub Actions run [`34713275963`](https://github.com/AnkitPorwal04/evalnoise/actions/runs/34713275963) on all five jobs. The Docker job built all four images and ran **359 tests in 76.3 s, `OK (skipped=1)`**, which is **358 executed**. The four unit jobs each ran **359 tests, `OK (skipped=22)`**, which is **337 executed** — the 21 Docker methods plus the same real-3.11 compile check, still skipped everywhere in CI for the reason recorded above.
+
+**No job in this run made a model call, and none could.** `test_subscription.py` drives every child through a scripted runner and points `binary=` at a stub executable in a temporary directory, so it needs no Codex CLI; the suite was confirmed locally to pass both with and without a real `codex` on `PATH`. CI never runs `evalnoise codex-check` itself.
+
+Locally at that commit: **359 tests, `OK (skipped=21)`, 15.5 s**, which is **338 executed** — one fewer skip than CI because a `python3.11` is on this workstation's `PATH`. `python3 -m compileall -q evalnoise probes tools scripts` is clean under both the development interpreter and that real 3.11. The Docker suite was **not** run locally for this commit, so nothing here claims those 21 methods passed locally at it; the remote Docker job is the only evidence for them.
+
+`evalnoise codex-check --confirm-subscription-use` was run once on this workstation and **exited 3, blocked, with `model_called: false`**. Its artifact records `codex-cli 0.153.4`, `Logged in using ChatGPT`, all 83 features present, `node_repl` reported enabled by `codex mcp list`, `tool_catalog_verified: false`, and no `execution` block. The blocking reason is that this build renders no tool catalog in `codex debug prompt-input`, so the effective tool list cannot be verified before the model call. **No live model validation is claimed by this or any other entry**: no `codex exec` was invoked, no response was received, and the full M3 gate is untouched and still open. That artifact lives at the gitignored `runs/codex-check/` and is deliberately not committed.
+
 ### v0.4 Remaining Gaps
 
 The full M3 gate is **open**. Not validated: any real provider call, real retry, timeout, or rate-limit attribution, a price table against an actual invoice, a public reviewed task subset, stateful or multi-tool turns, and a Harbor environment adapter. Provider latency in these records is a cassette lookup and is not a latency measurement. The budget ledger is synthetic and its prompt estimate is a character heuristic, so it must not be relied on as a spending control for a real provider.
