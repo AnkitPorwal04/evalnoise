@@ -14,6 +14,7 @@ from .probe import run as probe_run
 from .recovery import RecoveryError, cleanup, diagnose
 from .report import generate
 from .runner import execute
+from .subscription import SubscriptionCheckError, check as subscription_check
 
 
 def main(argv=None):
@@ -38,8 +39,22 @@ def main(argv=None):
     enforcement.add_argument("--image", default="evalnoise-probe:local")
     enforcement.add_argument("--output", type=Path, default=Path("runs"))
     enforcement.add_argument("--trust-config", action="store_true", help="Acknowledge that the probe image is trusted code this command will execute")
+    subscription = commands.add_parser(
+        "codex-check",
+        help="One known-answer Codex subscription smoke check; not a provider benchmark")
+    subscription.add_argument("--confirm-subscription-use", action="store_true",
+                              help="Acknowledge that this may spend your ChatGPT subscription quota on one real model call, if every preflight check passes first")
+    subscription.add_argument("--output", type=Path, default=Path("runs/codex-check"))
+    subscription.add_argument("--timeout-s", type=float, default=60.0)
+    subscription.add_argument("--codex-binary", default="codex")
     args = parser.parse_args(argv)
     try:
+        if args.command == "codex-check":
+            result = subscription_check(output=args.output, binary=args.codex_binary,
+                                        confirmed=args.confirm_subscription_use,
+                                        timeout_s=args.timeout_s)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return {"passed": 0, "failed": 2, "blocked": 3}[result["status"]]
         if args.command == "doctor":
             print(json.dumps(Docker().doctor(), indent=2))
         elif args.command == "report":
@@ -73,6 +88,6 @@ def main(argv=None):
                 return 0 if summary["status"] == "completed" else 2
         return 0
     except (BudgetError, ConfigError, CoordinationError, DockerError, ProviderError,
-            RecoveryError, OSError, ValueError, KeyError) as error:
+            RecoveryError, SubscriptionCheckError, OSError, ValueError, KeyError) as error:
         print(f"evalnoise: {error}", file=sys.stderr)
         return 2
