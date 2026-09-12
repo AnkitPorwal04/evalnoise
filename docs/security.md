@@ -34,7 +34,36 @@ A single advisory lock per daemon ID keeps cooperating EvalNoise runs from overl
 
 v0.4 adds a bounded agent loop whose model turn runs in the runner process, never inside a measured container. Tool containers keep every existing restriction, including `--network none`, and receive only the seed and a bounded base64 tool call in `EVALNOISE_TOOL_CALL_B64`. The Docker boundary accepts only that variable or `EVALNOISE_ARTIFACT_B64` for the bounded handoff; any other name is refused. As with the verifier envelope, base64 is not encryption and Docker administrators can read it.
 
-**There is no live provider client and no credential lookup anywhere in the codebase.** `provider.py` contains no HTTP client, no socket use, and no environment access, and a test asserts the absence of those constructs and that a full replay completes with `socket.socket` patched to raise. `provider.kind` accepts only `recorded`. Agent `parameters` is a closed numeric whitelist, so a configuration cannot smuggle an API key, base URL, or environment mapping into an artifact. A test sets fake `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` values and asserts that neither the name nor the value appears in any container argv, trial record, manifest, or report.
+**The measurement core has no live provider client and no credential lookup.** This statement is scoped to the recorded-provider path, which is unchanged: `provider.py` contains no HTTP client, no socket use, and no environment access, and a test asserts the absence of those constructs and that a full replay completes with `socket.socket` patched to raise. `provider.kind` accepts only `recorded`. Agent `parameters` is a closed numeric whitelist, so a configuration cannot smuggle an API key, base URL, or environment mapping into an artifact. A test sets fake `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` values and asserts that neither the name nor the value appears in any container argv, trial record, manifest, or report.
+
+### Scope correction: the experimental `codex-check` preflight
+
+`evalnoise codex-check` is a separate, experimental CLI preflight and is **not** part of
+the measurement core. It narrows the blanket claim above in exactly one way, stated here
+rather than buried: it executes the installed `codex` binary as a subprocess, and that
+subprocess performs its own ChatGPT subscription authentication.
+
+What remains true, and what is now qualified:
+
+- **EvalNoise still reads no credential files.** It does not open, copy, symlink, or parse
+  `auth.json` or any other auth material, and it holds no API key. Auth state is learned
+  only from the exit status and text of the official `codex login status` command.
+- **EvalNoise still has no live provider client.** There is no HTTP client, no socket, no
+  reverse proxy, and no API endpoint in EvalNoise. The `codex` binary is the client.
+- **The child environment is an allowlist** of `HOME`, `PATH`, `CODEX_HOME`, `TMPDIR`, and
+  `TERM`. A credential-shaped variable name is refused outright. `HOME` is required
+  because the official binary resolves its own credentials there, so this is **not**
+  credential isolation and is not described as one.
+- **The recorded provider path is untouched.** `codex-check` writes a separate
+  `subscription_smoke` artifact and never creates a `RecordedProvider`, cassette entry, or
+  budget ledger row.
+
+EvalNoise refuses to call the model at all unless it can first verify the child's tool
+catalog is empty or non-executing. On Codex CLI 0.153.4 that catalog is not exposed to any
+zero-model command, so the command blocks and exits 3. **That refusal is EvalNoise's own
+boundary, not a user preference, and no parameter, flag, or environment variable overrides
+it.** Post-hoc detection of a tool call in the transcript is treated as evidence of a
+control gap, never as the control itself.
 
 Cassettes are reviewed in-repo fixtures. They are frozen and hashed at preflight, bounded to 1 MiB and 512 entries, parsed strictly with duplicate-key and non-finite rejection, and restricted to a relative path of at most four components that resolves inside the configuration's own directory. Their digest enters the task contract hash. This detects an inconsistent or edited cassette; it is not a signature and not protection against an attacker who rewrites every hash. Do not put secrets in a cassette, a tool call, or an observation: all three are retained in artifacts.
 
