@@ -157,8 +157,81 @@ planned trials.
 - [ ] Real retry, timeout, and rate-limit attribution measured rather than simulated.
 - [ ] A live client and credential policy reviewed before any key is read.
 
-No paid or credentialed call is performed by this slice. There is no live client in the
-codebase and no credential lookup path.
+No paid or credentialed call is performed by this slice, and the recorded-provider path
+has no live client and no credential lookup. The separate experimental `codex-check`
+preflight below shells out to the official `codex` binary, which authenticates its own
+ChatGPT subscription; EvalNoise still reads no auth file and holds no API key.
+
+## `evalnoise codex-check` — A Smoke Check, Not A Gate Item
+
+`evalnoise codex-check --confirm-subscription-use` runs **one** known-answer public math
+prompt (`2+2`) through the officially supported `codex exec` path against the operator's
+already logged-in ChatGPT subscription. It exists to answer "does this host reach the
+subscription at all", and it is scoped so that it cannot quietly grow into a provider.
+
+**It does not close any M3 gate item, and the full M3 gate stays OPEN.** One trivial
+prompt is not a task subset, not a cost reconciliation, and not evidence about any model.
+It writes a `subscription_smoke` artifact to its own directory, never touches
+`RecordedProvider`, the cassette path, or the budget ledger, and adds no
+`RecordedProvider` entry. Subscription cost is recorded as `null`, never `0`: no per-call
+USD price exists for that path and quota consumption is not measured, so `null` means
+*unknown* while `0` would falsely claim the call was free. On this build the command
+blocks before any model request is sent, so that run consumes nothing, and the artifact
+claims no consumption anywhere — a regression test asserts a `blocked` record carries
+`model_called: false`, no `execution` block, and no spend phrasing.
+
+### What is actually enforced, and what only looks enforced
+
+Enforced before any model call, all zero-model:
+
+| Control | Mechanism |
+| --- | --- |
+| Version pin | `codex --version` must equal `codex-cli 0.153.4` |
+| Subscription auth | `codex login status` must report `Logged in using ChatGPT`; API-key auth is refused |
+| Feature names are real | every `--disable` name must appear in `codex features list`, so a rename blocks instead of no-opping |
+| Login method | `forced_login_method="chatgpt"` is set explicitly for the invocation |
+| No credentials in the child | env allowlist of `HOME`, `PATH`, `CODEX_HOME`, `TMPDIR`, `TERM` only |
+| Bounded subprocess | 60 s wall clock, 1 MiB stdout, 64 KiB stderr, process-group kill, no retries |
+| Clean context | fresh scratch cwd outside the repo, `--ignore-user-config --ignore-rules --ephemeral --skip-git-repo-check --strict-config`, `project_doc_max_bytes=0`, `mcp_servers={}` |
+
+Every config override above was validated against `--strict-config` on the pinned build by
+pairing it with a deliberately unknown key, so config load always failed before a model
+call. `project_root_fallback` is **not** set: no such field exists on 0.153.4 and passing
+it under `--strict-config` would abort the run.
+
+Deliberately **not** claimed:
+
+- **The tool catalog cannot be verified before the model call on 0.153.4.** `codex debug
+  prompt-input` renders the message list only, and `codex debug models` renders the model
+  catalog only; neither exposes the `tools` array that is actually sent. EvalNoise treats
+  an unverifiable catalog as a hard stop of its own, so **the outcome of this command on
+  this build is `blocked` with no model call and exit code 3.** That is the honest result,
+  not a bug to work around. The refusal is EvalNoise's boundary rather than a user
+  preference, and **no parameter, flag, or environment variable overrides it**; a
+  regression test asserts that `check()` exposes no such argument.
+- **Finding a tool call in the JSONL afterwards is a detector, not a control.** It is
+  recorded as a failure, but it only proves a tool was already offered and used.
+- **`--sandbox read-only` is not filesystem privacy.** It bounds writes by model-generated
+  commands. The child runs as the operator's user and needs a real `HOME` to find the
+  credentials, so it is not a confidentiality or credential-isolation boundary.
+- **`codex mcp list` reports `node_repl` as enabled** on this host. `--ignore-user-config`
+  and `mcp_servers={}` are intended to drop it, but that intent is unverifiable for the
+  same reason the catalog is.
+
+`codex login status` reports on **stderr** while the other probes report on stdout;
+reading stdout alone makes a logged-in host look logged out.
+
+### Unblocking
+
+When a Codex build exposes the effective tool catalog to a zero-model command,
+`inspect_tool_catalog` will verify it and the gate opens on its own. Until then, treat a
+`blocked` result as the command working correctly. The correct way to unblock is to make
+the catalog verifiable upstream, never to add a bypass here.
+
+Result interpretation lives in a pure `evaluate()` function so the JSONL, usage, and
+answer rules can be tested against synthetic `Execution` values without a catalog or a
+subprocess. `evaluate()` is reached in a real run only after a passing preflight; it is a
+test seam, not a path around the gate.
 
 ## Fixture Honesty
 
