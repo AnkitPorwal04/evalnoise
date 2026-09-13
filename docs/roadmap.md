@@ -58,11 +58,30 @@ Offline slice gate, each item backed by a named test or run in [the validation l
 
 **The full M3 gate remains OPEN.** It still requires an explicitly authorized and budgeted real-provider run, a small public reviewed task subset that is not this in-repo fixture, measured rather than simulated retry and timeout attribution, and a price table checked against an actual invoice. No live client or credential lookup exists in the measurement core, and EvalNoise reads no auth file anywhere; the experimental `codex-check` preflight delegates subscription auth to the official `codex` binary. The `tools/` and `cassettes/` fixtures are reviewed in-repo material, not a public benchmark dataset, and establish nothing about model capability. `evalnoise codex-check` does **not** close any item on this gate: it is one known-answer smoke prompt against an authorized ChatGPT subscription, not a provider benchmark, and on Codex CLI 0.153.4 it deliberately blocks before the model call because the effective tool catalog is not verifiable in advance. See [the M3 plan](m3-plan.md#evalnoise-codex-check--a-smoke-check-not-a-gate-item).
 
-## M4: Statistical Comparison Engine
+## M4: Statistical Comparison Engine - Descriptive Slice Only, Gate Open
 
-Predeclared contrasts, paired task-cluster uncertainty, time-block sensitivity, missingness analysis, multiple-comparison policy, and cost/reliability frontiers. Have the methodology independently reviewed rather than attaching generic error bars to dependent observations.
+Implemented in v0.5: `evalnoise compare`, an offline two-arm paired contrast summarised task by task, with fail-closed compatibility validation, full coverage and missingness accounting by pair identity, and offline JSON/CSV/HTML artifacts. Both within-run profile pairs and cross-run selected profiles are supported. No Docker, provider, or network access is involved.
 
-Gate: synthetic correlated data coverage tests, A/A false-positive characterization, known-effect calibration, and reports that distinguish descriptive results from inferential claims.
+**No uncertainty estimate is published.** Every estimand reports `bootstrap: null` and `evidence: interval_withheld_pending_methodology_review`. The CLI exposes no confidence, resample, seed, or cluster-floor option, because none of them would mean anything yet.
+
+Descriptive slice gate, each item backed by a named test in [the validation log](validation.md):
+
+- [x] Aggregation is task-weighted: repetitions are averaged within a task first and are never counted as independent observations
+- [x] Identity mismatch in task, verifier, image, provider, model, measurement kind, or schema is fatal and not declarable as a treatment
+- [x] An undeclared resource difference is refused as a confounder and names the exact flag that would declare it
+- [x] Engine identity is read with the schema `docker.py` actually writes (`id`, `server_version`, `cgroup_version`, `ncpu`); a cross-run contrast fails closed on a missing, incomplete, or unstable identity, `stable` must be exactly `True` rather than truthy, and an explicitly unstable engine refuses a within-run contrast too
+- [x] The configured seed is identity and fatal on mismatch, every trial seed is checked against its plan, and every pair is checked for seed equality across arms
+- [x] Scope language is specific: a cross-run contrast claims no shared schedule block, and a declared engine change withdraws the one-host claim
+- [x] Loss is detected by pair identity, so two arms losing the same number of pairs on different task/repeat cells is still reported as differential
+- [x] Unknown trial statuses and non-finite numbers are explicit errors, never silently scored
+- [x] Estimand names state what they are: jointly resolved, task-weighted, and `selected_case` rather than `complete_pair` whenever anything was lost
+- [x] The planned denominator is shown beside every included count, per task and overall
+- [x] An undefined summary is `null`, never `0.0`
+- [x] Reports are offline, escaped, CSP-restricted, script-free, and contain no interval or confidence language
+
+**The M4 gate remains OPEN and is not close to passing.** Still required: independent review of the methodology; a defensible estimand, since resampling tasks presumes an exchangeable draw from a population that a fixed configured suite is not; a resampling method with demonstrated coverage, which the prototype does not have; time-block sensitivity; multiple-comparison policy; and cost/reliability frontiers.
+
+The prototype resampler is retained at `evalnoise/resample.py` as an unexposed research utility, marked `validated: False`, imported by nothing in the reporting path. Its own characterisation is why it is withheld: the cluster floor it used was derived by treating bootstrap multisets as equiprobable when their probabilities span a 120-fold range at k=5, and measured coverage at that floor is 0.850 against a nominal 0.95 with a 0.150 A/A false-positive rate.
 
 ## M5: Local Experiment Workbench
 

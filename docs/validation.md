@@ -227,6 +227,120 @@ Locally at that commit: **359 tests, `OK (skipped=21)`, 15.5 s**, which is **338
 
 The full M3 gate is **open**. Not validated: any real provider call, real retry, timeout, or rate-limit attribution, a price table against an actual invoice, a public reviewed task subset, stateful or multi-tool turns, and a Harbor environment adapter. Provider latency in these records is a cassette lookup and is not a latency measurement. The budget ledger is synthetic and its prompt estimate is a character heuristic, so it must not be relied on as a spending control for a real provider.
 
+## v0.5 Descriptive Comparison Slice
+
+All records below are **offline**. `evalnoise compare` contacts no Docker daemon, no provider, and no network. It reads persisted run directories and writes only into a caller-named output directory. **No historical run artifact was modified by this work.**
+
+### Uncertainty Is Withheld, And Why
+
+An earlier draft of this milestone published cluster-bootstrap confidence intervals. Independent review blocked them, and direct measurement confirmed the objection. **All intervals are withheld**: every summary reports `bootstrap: null` and `evidence: interval_withheld_pending_methodology_review`, and the CLI no longer accepts a confidence, resample, seed, or cluster-floor option.
+
+Three findings, each reproduced on this workstation:
+
+1. **The cluster floor was derived invalidly.** It required `C(2k-1, k) * tail >= 1`, treating distinct bootstrap multisets as equiprobable. Enumerating all 126 multisets at k=5 gives multinomial probabilities from 0.00032 to 0.0384, a **120-fold range**, and only **19 of 126** fit inside a 2.5% tail by probability mass. Counting multisets says nothing about tail resolution. The floor was deleted, not repaired.
+2. **Measured coverage at that floor is poor.** Over 2000 simulations of independent Gaussian clusters at a nominal 95% level:
+
+| Clusters | Coverage (nominal 0.95) | A/A false positive (nominal 0.05) |
+| --- | --- | --- |
+| 5 (the former floor) | 0.850 | 0.150 |
+| 6 | 0.871 | 0.129 |
+| 8 | 0.905 | 0.095 |
+| 10 | 0.908 | 0.091 |
+| 30 | 0.946 | 0.054 |
+| 50 | 0.949 | 0.051 |
+
+   Nominal behaviour is not approached until roughly 30 clusters. **Every recorded EvalNoise run has 1 to 3 tasks.**
+3. **The estimand is unsettled.** Resampling tasks presumes the suite is an exchangeable sample from a task population. EvalNoise's suite is a fixed configured set of scripted tasks, so either there is no task-sampling variability to quantify or this suite is not a sample from the population of interest. An interval has no defined meaning until that is resolved.
+
+The earlier draft's coverage tests asserted `coverage >= 0.85` and `false positives <= 0.20`. Those are **characterisation bounds, not validity gates**, and presenting them as a passed gate was the error. The prototype is retained at `evalnoise/resample.py`, marked `validated: False` with an advisory on every record, imported by nothing in the reporting path; a test asserts `compare.py` does not reference it.
+
+### A Fail-Open Engine-Identity Defect, Found And Fixed
+
+`compare.py` read engine identity with Docker-API casing (`ID`, `ServerVersion`, `CgroupVersion`, `CPUs`). `evalnoise/docker.py` writes `id`, `name`, `server_version`, `cgroup_version`, `ncpu`. **No real manifest carries the casing the reader used**, so every field resolved to `None` and two different daemons compared equal as `None == None`. The cross-run engine check was silently inert. The test fixture used the same wrong casing, so it passed vacuously and provided no protection.
+
+Fixed: the reader uses the written schema, and a cross-run contrast now **fails closed** on a missing `engine_identity`, any missing or null field within it, a missing `engine_identity_final`, or `engine_identity_final.stable` being false. Eight regressions cover this, including one that asserts Docker-API casing is rejected and one that confirms engine identity is irrelevant to a within-run contrast.
+
+### Second-Review Defects Found And Fixed
+
+A second independent review found one blocker and four further defects, all reproduced and fixed:
+
+- **Blocker: cross-run seed differences were declarable.** `seed` sat in the treatment whitelist, so two runs with different configured seeds could be contrasted. Pairing is by `(task, repeat)`, but a repetition index is only a label and the seed is what determines the workload, so those pairs were two different workloads reported as a resource effect. The configured seed is now **fatal on mismatch and not declarable**. Each retained trial is additionally validated against the seed its own plan assigned it, and each pair is validated for seed equality across the arms.
+- **`stable` was tested for truthiness.** `final.get("stable")` accepts the string `"no"`, which is truthy, so a manifest actively reporting instability would pass. The check is now `is not True`.
+- **Within-run contrasts ignored engine instability.** Stability was only consulted on the cross-run path, so a run whose daemon changed mid-execution could still be contrasted against itself. An explicitly unstable engine now refuses in **both** scopes; within a run an *absent* record is treated as unknown and warned about rather than refused, because older artifacts predate the field.
+- **Scope language overclaimed.** The dependence note asserted a shared schedule block and the interpretation asserted "one host" regardless of scope. Separate runs share no schedule block, no ordering, and no contemporaneous host state, and a declared engine change means the arms did not run on one host at all. Artifacts now carry `host_scope` and scope-specific wording, with warnings for both cases.
+- **Empty duration summaries used the wrong label.** An empty duration summary reported `no_jointly_resolved_pairs`, but duration eligibility is joint *passing*, not joint resolution. It now reports `no_jointly_passing_duration_pairs` with matching detail text.
+- **Mixed-type unknown statuses crashed uncontrolled.** `sorted` over a set mixing `None`, integers, and strings raises `TypeError`. Unknown statuses are now sorted by `repr`, so the refusal is a controlled `CompareError`.
+
+Six regressions cover these: configured-seed mismatch, mutated trial seed, arms disagreeing on seed, within-run instability, a truthy non-boolean `stable`, an empty duration summary, and a mixed-type status set.
+
+### Other Defects Found And Fixed
+
+- **Differential loss was measured by count.** Two arms losing the same number of pairs on entirely different task/repeat cells were reported as balanced. Loss is now compared by pair identity: `pairs_lost_in_baseline_only` and `pairs_lost_in_candidate_only` list the affected cells, and `loss_counts_balanced: true` alongside `differential_missingness: true` is the explicit signature of that case.
+- **Unknown trial statuses fell through to non-pass.** A status this version does not classify is now an explicit error, because bucketing it silently is a scoring decision disguised as a fallthrough.
+- **Non-finite numbers could reach a mean.** NaN and infinite durations are now refused with the trial ID named.
+- **Estimand names overclaimed.** They are now `jointly_resolved_success_task_weighted`, `jointly_resolved_infrastructure_error_task_weighted`, and `jointly_passing_duration_task_weighted`, and each carries `case_basis`: `complete_pair` only when every planned pair contributed, otherwise `selected_case`. The planned denominator is printed beside every included count.
+- **"Predeclared" was wrong.** Naming two arms on a command line after the runs exist is **user selection**, not preregistration. The artifact now says so and states that nothing prevents a person from hand-selecting the contrast they liked.
+
+### Test Suite
+
+Local unit-only on the development interpreter: **440 discovered, 21 skipped, 419 executed**, `OK (skipped=21)` in 18.9 s. Under **real CPython 3.11.13**: **440 discovered, 22 skipped, 418 executed**, `OK (skipped=22)` in 18.4 s. `python3 -m compileall -q evalnoise probes tools scripts` is clean under both.
+
+**Full Docker suite: `EVALNOISE_DOCKER_TESTS=1`, run sequentially and alone under `caffeinate -i -m -s` to keep the host awake: 440 discovered, 0 skipped, 440 executed, `OK` in 59.3 s.** The log was read line by line: zero `threading.excepthook` invocations and zero thread tracebacks.
+
+#### The Known Intermittency Recurred, Was Captured, And Is Unattributed
+
+The **first** full Docker run at this commit failed with `FAILED (errors=2)` in 57.6 s. Both errors were the **same two `test_agent_docker.py` methods** failing in image resolution with `docker image failed (exit 1): Error response from daemon: {"message":"No such image: evalnoise-tools:local"}`. This is **the fourth occurrence overall and the second captured**, and it matches the previously captured symptom exactly.
+
+It is **not a regression from this milestone**, on three pieces of evidence: the tag was present in `docker images` before and after with an unchanged ID (`sha256:f739dd69eb35…`, built 2026-09-11); **three of the five** `test_agent_docker` methods passed in that same run, including `test_real_tool_container_emits_a_valid_observation`, which resolves the same tag, so later lookups of it succeeded within the run; and this milestone's diff touches none of `docker.py`, `runner.py`, `agent.py`, or `test_agent_docker.py`.
+
+**No mitigation was applied.** No retry, wait loop, image pre-warm, or relaxed assertion. The rerun passed cleanly. Two runs are not a diagnosis, the cause remains unproven, and the log is retained. Treat the Docker suite as carrying this known, uncharacterised intermittency: **four failures in roughly eighteen full runs, always in the real-container tests, never in the unit tests.**
+
+v0.4 was 359 discovered / 338 executed. The 81 added are `test_resample.py` (18) and `test_compare.py` (63). **No pre-existing test was modified, relaxed, or removed.** The only change to existing code outside the new modules is extracting `report.py`'s inline CSS into a shared `STYLE` constant; generated `report.html` was confirmed byte-identical (MD5 `24f46191d9c49d744e12ba16d041d0ec`) to the pre-refactor code's output.
+
+**One derived artifact set was rewritten during earlier work on this milestone and is recorded rather than glossed.** A byte-identity check ran `evalnoise report` in place against `runs/sampler-overhead-e60d93977bd0`, regenerating `summary.json`, `trials.csv`, and `report.html`. `report.html` was restored to its original bytes (MD5 `8dd04be47d776406ac30ca5f817980ec`); `summary.json` and `trials.csv` were not restored and are now current-code output. The 20 per-trial JSON files and `manifest.json` were untouched, and every M2 figure still recomputes from them exactly (`sampler-off` median 3.561533 s, `sampler-on` 3.5607595 s). Regenerate derived artifacts into a copy, never into a retained evidence directory. All v0.5 comparison outputs are written into the new `runs/cmp-v5b/` directory.
+
+### Comparison Of The Existing Recorded Artifacts
+
+Four comparisons produced into the new `runs/cmp-v5b/` directory. **None publishes an interval**; all report `uncertainty.published: false`.
+
+| Comparison | Scope | Attestation | Tasks | Repeats | Jointly resolved | Success difference | Case basis |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `memory-calibration-2ca4fc278ad1` tight vs roomy | within-run | manifest structural | 3 | 3 | 9 / 9 | +33.33 pp | complete_pair |
+| `identical-profile-control-363b504ae11c` A/A | within-run | manifest structural | 2 | 3 | 6 / 6 | 0.00 pp | complete_pair |
+| `sampler-overhead-e60d93977bd0` off vs on | within-run | manifest structural | 1 | 10 | 10 / 10 | 0.00 pp | complete_pair |
+| `agent-offline-12116cd6a8cf` vs `-c1be0f804675` | cross-run | per-trial `contract_sha256` | 1 | 2 | 2 / 2 | 0.00 pp | complete_pair |
+
+The calibration comparison reproduces the descriptive +33.3-percentage-point paired difference recorded in the M0 section above, now with the aggregation made explicit: **9 jointly resolved pairs across only 3 tasks**. Its duration summary is `selected_case` at 6 of 9 pairs, because the `memory` task did not pass under `tight`.
+
+**The sampler-overhead row remains the clearest illustration.** That run has **one task**, `fixed-cpu`, repeated 10 times per arm. The M2 record describes it as "10 complete pairs", which is true, but those are 10 replicates of a single task.
+
+That comparison also produced a finding worth recording. The M2 section reports unmatched successful-duration **medians** of 3.561533 s (`sampler-off`) against 3.5607595 s (`sampler-on`), making the sampled arm nominally faster by about 0.8 ms. The **paired within-task mean difference** is **+0.00334 s**, the sampled arm nominally *slower* by about 3.3 ms. **The two summaries disagree in sign.** Neither is an overhead measurement and neither carries any uncertainty; the point is that an unmatched median contrast and a matched paired contrast are different quantities and can point in opposite directions. **No claim about sampler overhead is made or changed, the M2 record stands as written, and sampling remains opt-in and off by default.**
+
+The cross-run agent comparison now genuinely exercises the engine check: both manifests carry daemon `51d53897-aea4-430d-940e-4635e5a17651` with `engine_identity_final.stable: true`. Before the casing fix this check compared `None` with `None`. Its `host_scope` reads *two separate runs against the same recorded engine identity, executed at different times*, and a warning records that they share no schedule block. Its duration summary is `no_jointly_passing_duration_pairs` rather than a number, because agent trials record `container_duration_s: null` by design.
+
+### Refusals Exercised Against Real Artifacts
+
+Eight CLI cases were checked for exact exit codes: three successes exit 0, five refusals exit 2.
+
+- An undeclared `sample_interval_s` difference exits 2 and names the flag to add.
+- A cross-run comparison of the two M0 `memory-calibration` runs exits 2: neither manifest records per-task contract hashes. **This is the historical missing-evidence case**, and no attempt is made to reconstruct identity for it.
+- The reading cassette against the lazy cassette exits 2 on both `task_contracts` and `provider_snapshot`.
+- `--confidence`, `--seed`, and `--min-clusters` are rejected as unrecognised arguments, confirming the affordances are gone from the command surface rather than merely ignored.
+
+### Browser Inspection, And A Layout Defect Found And Fixed
+
+All four generated comparison reports were served from the existing loopback report server on port 4177 and opened in headless Chromium (Playwright, Chrome Headless Shell 151.0.7922.34) at **1440 x 1000 desktop** and **390 x 844 mobile**.
+
+The first inspection **found a real defect**: `document.scrollWidth - clientWidth` was **28 px at desktop and 158 px at mobile** on three of four reports. The offending element was identified precisely rather than guessed: a `<strong>` containing the 44-character unbroken token `interval_withheld_pending_methodology_review`, which widened the page, after which every `.scroll` container sized itself to the widened body and the tables appeared to overflow too.
+
+Fixed with a comparison-scoped `COMPARISON_STYLE` block appended **after** the shared `STYLE` rather than merged into it, so the experiment report's HTML remains byte-identical. After the fix, all four reports at both viewports report **0 px horizontal overflow, 0 console errors, 0 page errors, and 0 failed network requests**. Desktop and mobile renderings were also looked at, not merely measured: the withheld-uncertainty notice, the contrast-selection notice, the identity table with its `DECLARED TREATMENT` marker, and the per-task tables all render and wrap correctly at 390 px.
+
+This is one browser engine at two viewports. It is not cross-browser, accessibility, or print-layout validation.
+
+### v0.5 Remaining Gaps
+
+The **M4 gate is open and not close to passing.** Not delivered: any uncertainty estimate, a defensible estimand for a fixed configured suite, a method with demonstrated coverage at realistic task counts, independent methodology review, time-block sensitivity, multiple-comparison policy, cost/reliability frontiers, and power analysis. No inferential claim has been made from any EvalNoise data. Browser inspection **has now been performed** and is recorded below. Remote CI status is recorded below. The full M3 live-provider gate is untouched and also remains open.
+
 ### Remaining Gaps
 
 Two exited containers are on the engine and were both left in place, because neither has a surviving run directory, so no manifest can authorise the ownership-checked cleanup path and removing either by hand would be exactly the unscoped sweep this project refuses.

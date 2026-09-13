@@ -48,6 +48,54 @@ The in-repo fixture answer is a sum of squares up to a seed-derived limit and is
 
 OOMKilled is evidence that Docker observed an OOM kill, not proof of which limit caused it or whether an agent would otherwise succeed. Exit 137 without OOMKilled is an unattributed workload failure. Expected exit plus OOMKilled is its own non-clean outcome. Timeout and cancellation are runner interventions; their resulting kill exit code must not be relabeled as OOM merely because it is 137.
 
-## Future Statistical Gate
+## Paired Comparison (v0.5, Descriptive Only)
 
-Before adding confidence intervals, specify a task sampling population, paired task-cluster resampling or another justified dependence model, time-block handling, missingness sensitivity, multiple-comparison policy, and minimum effective sample requirements. Validate interval behavior on simulated correlated data and known controls. An A/A result is evidence to inspect, not a guarantee of zero false positives. Predefine the primary contrast instead of selecting the largest observed difference after running many profiles.
+`evalnoise compare` contrasts exactly two **arms**, where an arm is one profile inside one recorded run. **It publishes no uncertainty estimate of any kind.** Every summary carries `bootstrap: null` and `evidence: interval_withheld_pending_methodology_review`, and the CLI has no confidence, resample, seed, or cluster-floor option.
+
+### Why Uncertainty Is Withheld
+
+Three independent reasons, any one of which is sufficient:
+
+1. **The estimand is unsettled.** Resampling tasks presumes the suite is an exchangeable sample from a task population. EvalNoise's suite is a fixed configured set of scripted tasks. If the fixed suite is the target there is no task-sampling variability to quantify; if a population is the target this suite is not a sample from it. Until that is resolved an interval has no defined meaning.
+2. **The prototype's adequacy argument was wrong.** It derived a minimum cluster count by requiring `C(2k-1, k) * tail >= 1`, which counts distinct bootstrap multisets as if they were equiprobable. They are not: at k=5 their multinomial probabilities span a 120-fold range (0.00032 to 0.0384) and only 19 of the 126 fit inside a 2.5% tail by mass. The floor was deleted, not repaired.
+3. **Measured coverage is poor where it mattered.** At the former floor of k=5, coverage is 0.850 against a nominal 0.95 and the A/A false-positive rate is 0.150, three times nominal. k=8 gives 0.905/0.095. Nominal behaviour is not approached until roughly k=30, and every recorded EvalNoise run has 1 to 3 tasks.
+
+### What Is Reported
+
+Three summaries, always all three, named for exactly what they are:
+
+1. **`jointly_resolved_success_task_weighted`** - candidate minus baseline of a `passed` indicator, averaged within each task then averaged unweighted across tasks, over pairs where both arms recorded a resolved outcome.
+2. **`jointly_resolved_infrastructure_error_task_weighted`** - the same construction over an indicator of recorded harness, engine, verifier-execution, agent-loop, or budget failure.
+3. **`jointly_passing_duration_task_weighted`** - the same construction over `container_duration_s`, restricted to pairs where both arms passed and both recorded a duration.
+
+Averaging within a task first means tasks weigh equally rather than tasks that happened to retain more repetitions weighing more. Repetitions are replicates sharing the task, host, schedule block, and seed; they are never counted as independent observations.
+
+Each summary records `case_basis`: `complete_pair` when every planned pair contributed, `selected_case` when anything was lost. Under `selected_case` the figures describe a surviving subset whose selection may itself depend on the treatment. The planned denominator is printed beside every included count, per task and overall.
+
+### Contrast Selection Is Not Preregistration
+
+Both arms are named as command arguments. That is **user selection after the runs already existed**, not preregistration, and it carries none of preregistration's guarantees. The tool has no mode that scans for the largest difference, but nothing stops a person doing that by hand. Because no interval or test is published there is no multiplicity correction to apply, and none is implied.
+
+### What Is Held Fixed
+
+Held fixed and checked structurally: the task set, each task's contract hash, the workload and verifier image IDs, the provider/model/cassette identity, the measurement kind, and the schema version. **These are fatal on mismatch and can never be declared as a treatment.**
+
+Varied only when declared with `--treatment`: `cpus`, `memory_mb`, `timeout_s`, `concurrency`, `cpuset_cpus`, `sample_interval_s`, and for cross-run contrasts `repeats`, the experiment-wide sampling interval, the tool version, and the engine `engine_daemon_id`, `engine_server_version`, `engine_cgroup_version`, `engine_ncpu`. Any undeclared difference is refused as a confounder. When several fields differ the result is a joint contrast of all of them.
+
+**The configured seed is identity, not a treatment, and is fatal on mismatch.** Pairing is by `(task, repeat)`, but a repetition index is only a label: the seed is what determines the workload. Two runs with different configured seeds assign different seeds to the same repeat index, so pairing them would contrast two different workloads and report the difference as a resource effect. Beyond the configured seed, every retained trial is checked against the seed its own plan assigned it, and every pair is checked for seed equality between the two arms.
+
+**A declared engine change withdraws the one-host claim.** If any of the engine fields is declared as treatment, the artifact says the arms did not run on one host and records that every difference between them is confounded with that change. `host_scope` states the actual scope in every artifact.
+
+**The whole configuration hash is deliberately not compared**, because the treatment lives inside it. The check is field by field, with identity separated from treatment.
+
+Cross-run contrasts additionally require a complete, stable engine identity in both manifests, read with the lowercase schema `docker.py` writes. A missing, incomplete, or unstable identity refuses the contrast rather than comparing nulls. `engine_identity_final.stable` must be exactly `True`; a truthy non-boolean such as the string `"no"` is refused. **An explicitly unstable engine refuses a within-run contrast too**, because trials spanning a daemon change are not attributable to one engine regardless of scope. Within a run an *absent* stability record is unknown rather than unstable, and is surfaced as a warning, because older artifacts predate the field.
+
+Separate runs share no schedule block, no ordering, and no contemporaneous host state. The dependence note says so explicitly for a cross-run contrast rather than reusing the within-run wording, and a warning records that time-separated execution is itself uncontrolled.
+
+### Refusals
+
+Missing, cancelled, `pending_verification`, `agent_incomplete`, and `unknown` records are excluded from pairs and counted by reason for each arm. Loss is compared **by pair identity**, so two arms losing the same number of pairs on different task/repeat cells is reported as differential rather than balanced. An unknown trial status and a non-finite number are explicit errors, never silently scored. A summary with no contributing pair is `null`, never `0.0`.
+
+## Remaining Statistical Gaps
+
+Uncertainty, time-block sensitivity, multiple-comparison policy, cost/reliability frontiers, and power analysis are **all open**. The methodology has not been independently reviewed. The M4 gate is open.

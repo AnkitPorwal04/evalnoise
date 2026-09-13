@@ -31,7 +31,9 @@ An evaluation engineer should be able to define execution conditions, run a repr
 
 ## Platform Requirements, Not Yet Delivered
 
-Agent and benchmark adapters; repository/patch artifact transfer; provider/version provenance; raw resource telemetry; host-isolation policies; statistically reviewed uncertainty estimates; experiment comparison history; live progress; reviewable share bundles; remote worker authentication; artifact retention and access control.
+Agent and benchmark adapters; repository/patch artifact transfer; provider/version provenance; raw resource telemetry; host-isolation policies; **independently reviewed** uncertainty estimates; experiment comparison history; live progress; reviewable share bundles; remote worker authentication; artifact retention and access control.
+
+Uncertainty estimates now exist as of v0.5 but are **not independently reviewed**, which is why that item stays on this list rather than moving off it. Nothing in the current implementation has been checked by a statistician outside this project.
 
 ## v0.2 JSON Verification Acceptance Criteria
 
@@ -41,6 +43,22 @@ Agent and benchmark adapters; repository/patch artifact transfer; provider/versi
 - Hashes bind both image identities and task/verifier definitions; inconsistent records cannot be merged into a report.
 - Verification runs outside workload batches with explicit budgets and retained lifecycle evidence.
 - Existing M0 configs/reports remain usable with their original exit-contract interpretation.
+
+## v0.5 Paired Comparison Acceptance Criteria
+
+- Summaries aggregate by task; repetitions are averaged within a task and never counted as independent observations.
+- **No uncertainty estimate is published**, and the command exposes no confidence, resample, seed, or cluster-floor option.
+- Task, verifier, image, provider, model, measurement-kind, and schema identity are fatal on mismatch and can never be declared as a treatment.
+- A resource or environment field that differs without an explicit declaration is refused as a confounder, naming the flag that would declare it.
+- Engine identity is read with the schema the runner actually writes; a cross-run contrast fails closed on a missing, incomplete, or unstable identity, `stable` must be exactly `True`, and an explicitly unstable engine refuses a within-run contrast too.
+- The configured seed is identity and fatal on mismatch; trial seeds are validated against the plan and between paired arms.
+- Scope claims are specific: no shared schedule block is claimed across runs, and no one-host claim survives a declared engine change.
+- Differential loss is detected by pair identity, so equal loss counts on different cells are still reported as differential.
+- Unknown trial statuses and non-finite numbers are explicit errors, never silently scored.
+- Summaries are labelled `selected_case` rather than `complete_pair` whenever anything was lost, and the planned denominator is always visible.
+- An undefined summary is null rather than zero.
+- Comparison reports are offline, escaped, script-free, and contain no interval, confidence, significance, or causal language.
+- A comparison never writes into, mutates, or reclassifies either source run.
 
 ## Non-Goals
 

@@ -39,7 +39,9 @@ Image IDs are resolved once before execution. Each task/repetition pair uses the
 - `runner.py`: lifecycle ownership, batch scheduling, cancellation, and experiment artifacts.
 - `verification.py`: bounded artifact/verdict parsing and immutable task contract hashes.
 - `storage.py`: temporary-file, fsync, atomic-replace JSON persistence.
-- `report.py`: identity checks, descriptive aggregation, CSV and escaped offline HTML.
+- `report.py`: identity checks, descriptive aggregation, CSV and escaped offline HTML, and the shared page style.
+- `resample.py`: **experimental and unvalidated**, retained as a research utility and imported by nothing in the reporting path. Paired cluster bootstrap and percentile intervals over plain numbers. Every record it returns is marked `validated: False`.
+- `compare.py`: arm loading through the existing report validation, fail-closed compatibility and engine-identity checking, pairing and pair-identity loss accounting, the three descriptive task-weighted summaries, and the offline comparison artifacts. It publishes no uncertainty and imports no resampling code.
 - `cli.py`: explicit trust acknowledgement and commands. No network service or privileged web API.
 
 ## ADR 001: Local Standard-Library Runner
@@ -111,6 +113,24 @@ Because each step is a fresh container, tools are pure functions of `(seed, tool
 Accepted for v0.4. A cassette entry is keyed by the SHA-256 of the full canonical request, including the entire message history with every prior observation verbatim, so a replay cannot skip a tool call or accept a different observation. A miss is a hard error; the provider never generates, interpolates, or selects a nearest entry. The cassette is frozen and hashed at preflight, its digest enters the task contract hash, and the manifest keeps a snapshot so reports regenerate offline without the file while a mutation is still refused.
 
 All money is integer micro-USD with ceiling division, so no rounding path can admit more than the declared ceiling. Prices are declared in the configuration because a provider's price list cannot be verified offline. Admission is worst case and happens before the provider call and before the tool container; plan admission runs before the engine is touched. The ledger is run-scoped and mutex-guarded so profile concurrency cannot over-admit. Ceilings are enforced against a committed figure that settles back to the observed one, so the ledger publishes no field claiming to be a retained worst-case total: after settlement such a figure would simply restate the observation under a misleading name. Every settlement path returns its own verdict, and an accounting overrun outranks whatever else ended the call, so the ledger, the step trace, and the trial status always agree. Simulated reported usage is recorded separately from `actual_charged_micros`, which is zero in this slice because nothing is sent.
+
+## ADR 015: Descriptive Comparison, Uncertainty Withheld
+
+Accepted for v0.5, superseding the interval-publishing design that preceded it. `evalnoise compare` aggregates **by task**: repetitions of a task under one treatment share the task, image, host, schedule block, and seed, so they are averaged within the task before anything is combined, and tasks weigh equally regardless of how many repetitions each retained.
+
+**No uncertainty estimate is published.** An earlier design derived a minimum cluster count from the resampling support by requiring `C(2k-1, k) * tail >= 1`. That is invalid: it treats bootstrap multisets as equiprobable, and at k=5 their probabilities span a 120-fold range with only 19 of 126 fitting a 2.5% tail by mass. Measured coverage at that floor is 0.850 against a nominal 0.95, with a 0.150 A/A false-positive rate. Separately, the estimand is unsettled, because resampling tasks presumes an exchangeable draw from a population that a fixed configured suite is not. The floor and the interval were removed rather than rationalised, and the CLI exposes no confidence, resample, seed, or cluster-floor option so the affordance cannot be mistaken for a capability.
+
+The prototype survives at `evalnoise/resample.py` as an unexposed research utility. It is marked `validated: False`, carries an advisory string on every record, and is imported by nothing in the reporting path; a test asserts that `compare.py` does not reference it.
+
+Compatibility **fails closed on identity and open only on declaration**. Task, verifier, image, provider, model, measurement-kind, and schema identity are fatal on mismatch and not declarable. Resource and environment fields differ only when named with `--treatment`. The whole configuration hash is deliberately not compared, because the treatment lives inside it.
+
+Engine identity is read with the lowercase schema `docker.py` actually writes: `id`, `server_version`, `cgroup_version`, `ncpu`. An earlier version read Docker-API casing, so every field resolved to `None` and two different daemons compared equal as `None == None`, silently disabling the check. A cross-run contrast now fails closed on a missing, incomplete, or unstable engine identity, including the end-of-run `engine_identity_final.stable` flag.
+
+The **configured seed is identity and fatal on mismatch**, never declarable. Pairing is by `(task, repeat)`, but a repetition index is only a label and the seed determines the workload, so trial seeds are validated against the plan and between paired arms. `engine_identity_final.stable` must be exactly `True` rather than truthy, and an explicitly unstable engine refuses a within-run contrast as well as a cross-run one. Scope claims are specific: separate runs are recorded as sharing no schedule block, and a declared engine change withdraws the one-host claim from both `host_scope` and the interpretation.
+
+Loss is compared **by pair identity**, not by count, because two arms can lose the same number of pairs on entirely different task/repeat cells. Unknown trial statuses and non-finite numbers are explicit errors rather than silent scoring decisions. Summaries record `selected_case` rather than `complete_pair` whenever anything was lost, and the planned denominator appears beside every included count.
+
+Cross-run contrasts additionally require persisted per-task contract hashes in both manifests and a `contract_sha256` on every used trial. Within one run identity is structural, so older artifacts remain comparable with the weaker attestation recorded in the artifact.
 
 ## Reliability Boundaries
 

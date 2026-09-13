@@ -4,15 +4,11 @@
 
 EvalNoise is a research-driven experiment runner for controlled resource-profile comparisons. It preserves the configuration, randomized schedule, image identity, container state, bounded logs, missing trials, and descriptive comparisons in an offline experiment notebook.
 
-**Status: v0.4 adds an offline agent slice on top of v0.3 measurement fidelity. It is not a finished agent-evaluation platform and the full M3 gate is open.** The fixtures are scripted calibration workloads and a small reviewed in-repo agent fixture. They validate plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
+**Status: v0.5 adds an offline paired comparison slice on top of the v0.4 agent slice. It is not a finished agent-evaluation platform; the full M3 and M4 gates are both open.** The fixtures are scripted calibration workloads and a small reviewed in-repo agent fixture. They validate plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
 
-v0.4 adds a bounded tool/action loop whose model turn runs in the runner process and whose every tool action runs as a fresh hardened container with `--network none`, keeping the existing enforcement audit, telemetry, ownership labels, and cleanup rules. Model responses come from a **recorded cassette keyed by the full canonical request**, including the whole message history, so a replay cannot skip a tool call; a miss is a hard error, never a generated reply. A **synthetic integer micro-USD ledger** admits every provider call and tool container in advance and records `provider_requests_sent: 0` and `actual_charged_micros: 0`, because nothing is sent.
+v0.5 adds `evalnoise compare`, an offline two-arm paired contrast that is **descriptive only**. Summaries are task-weighted: repetitions of a task are averaged within that task before anything is combined, because they share the task, host, schedule block, and seed and are not independent observations. Compatibility **fails closed**: task, verifier, image, provider, model, and schema identity must match and can never be declared as a treatment, and a resource difference is refused as a confounder unless named with `--treatment`.
 
-**The measurement core has no live provider client and no credential lookup.** That claim is scoped to the recorded-provider path, which is unchanged. The one exception is the separate, experimental `evalnoise codex-check` preflight, which shells out to the officially installed `codex` binary and lets *that* binary authenticate a ChatGPT subscription: EvalNoise itself still reads no `auth.json` or other auth file, holds no API key, and opens no socket, and it learns auth state only from the official `codex login status` command. A real-provider *benchmark* run needs explicit authorization and budget and has not happened. The agent fixture answer is arithmetically derivable once its seed-derived limit is known, so no claim is made that it is unreachable without tools, and none about model capability.
-
-v0.3 adds a pinned Docker endpoint and daemon identity, raw bounded Engine telemetry over a **local Unix socket only**, cgroup throttling counters recorded without invented zeros, a request-echo enforcement audit, an optional reviewed cgroup probe, optional CPU affinity, advisory single-runner coordination for one local user and engine, and read-only recovery diagnosis with narrowly scoped cleanup. **Sampling stays opt-in and off by default:** the recorded sampler-on/sampler-off contrast differs by less than the harness can resolve, which establishes no overhead figure in either direction rather than showing there is none.
-
-Repository: [AnkitPorwal04/evalnoise](https://github.com/AnkitPorwal04/evalnoise). Licensing has not been selected yet; this is not presented as a licensed open-source release.
+**No uncertainty estimate is published, deliberately.** Every summary reports `bootstrap: null` and `interval_withheld_pending_methodology_review`, and the CLI exposes no confidence, resample, seed, or cluster-floor option. The prototype resampler failed its own characterisation: its cluster floor was derived by treating bootstrap multisets as equiprobable when their probabilities span a 120-fold range, and measured coverage at that floor is 0.850 against a nominal 0.95 with a 0.150 A/A false-positive rate. The estimand is also unsettled, because resampling tasks presumes the fixed configured suite is an exchangeable sample from a population it is not. The resampler is retained at `evalnoise/resample.py` as an unexposed research utility marked `validated: False`; nothing in the reporting path imports it. **The M4 gate is open and not close to passing.**
 
 ## Why This Exists
 
@@ -31,6 +27,7 @@ EvalNoise asks a narrower, auditable question first: **when we run the same trus
 - Atomic per-trial JSON and a manifest that preserves incomplete runs.
 - Optional raw Docker CLI samples, explicitly not peak-memory measurements.
 - Offline HTML, JSON summaries, and CSV exports with explicit denominators.
+- Descriptive paired comparisons over tasks, within one run or across two, with fail-closed identity validation, pair-identity loss accounting, and no published uncertainty.
 - Optional independent verifier containers with separate resource budgets and data-only artifact handoff.
 - Task/verifier content hashes, execution-versus-correctness outcomes, and interruption-safe verification checkpoints.
 - Advisory per-daemon run coordination that survives `SIGKILL`, plus read-only diagnosis and ownership-checked cleanup by resolved container ID.
@@ -64,6 +61,16 @@ Rebuild a report from existing evidence, without Docker:
 ```sh
 python3 -m evalnoise report runs/<experiment-run-id>
 ```
+
+Compare two profiles offline. Both arms are named before any number exists; there is no mode that searches for the largest difference:
+
+```sh
+python3 -m evalnoise compare runs/<run-id> --baseline tight --candidate roomy \
+    --treatment memory_mb --output runs/cmp-v5b/calibration
+python3 -m evalnoise compare runs/<run-a> runs/<run-b> --baseline standard --candidate standard
+```
+
+Omit `--output` to print the JSON and write nothing; `--output` writes into a directory you name and never into either run. A field that differs without a matching `--treatment` exits 2 and names the flag that would declare it. The configured seed is identity, not a treatment: a seed mismatch is fatal, and every trial seed is checked against its plan and against its counterpart, because a repetition index is a label while the seed determines the workload. Cross-run contrasts additionally require persisted per-task contract hashes and a complete, stable engine identity on both manifests, so artifacts written before those existed are refused rather than having their identity guessed.
 
 ## Measurement Fidelity And Recovery
 
@@ -127,7 +134,7 @@ The report's pass rate is clean final passes divided by **recorded** trials, inc
 - [Research and source assessment](docs/research.md): why this is required and what existing work establishes.
 - [Product requirements](docs/product.md): users, use cases, requirements, and non-goals.
 - [Architecture and decisions](docs/architecture.md): execution flow, modules, and design tradeoffs.
-- [Experiment methodology](docs/methodology.md): controls, estimands, confounders, and interpretation.
+- [Experiment methodology](docs/methodology.md): controls, estimands, the cluster sampling unit, the evidence policy, confounders, and interpretation.
 - [Data contract](docs/data-contract.md): configuration, artifacts, outcomes, and compatibility.
 - [Independent verification](docs/verification.md): protocol, trusted verifier authoring, lifecycle, and scope.
 - [Security and operations](docs/security.md): trust boundary, containment, cleanup, and sharing.
@@ -145,10 +152,10 @@ python3 -m compileall -q evalnoise probes tools scripts
 EVALNOISE_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 ```
 
-Discovery is now 359 tests: 338 unit and 21 real Docker methods. The first command reports `Ran 359 tests ... OK (skipped=21)`, which is **338 executed**, not 359 passed — the 21 skips are exactly the opt-in Docker methods, and they run only under the final command. Published v0.4 was 293; the 66 added since are the experimental `codex-check` suite. v0.3 ran 199; those M0-M2 tests keep their semantics. The final command creates and removes real containers using the previously built images, removes only containers it created, and never prunes. Run it sequentially and alone — a second concurrent run is refused by the engine lock by design. Read its stderr for thread tracebacks rather than trusting the exit code, because a telemetry reader thread can die through `threading.excepthook` without failing the run. Check [GitHub Actions](https://github.com/AnkitPorwal04/evalnoise/actions) for the result of the specific commit; local success is not proof of remote CI success.
+Discovery is now 414 tests: 393 unit and 21 real Docker methods. The first command reports `Ran 414 tests ... OK (skipped=21)`, which is **393 executed**, not 414 passed — the 21 skips are exactly the opt-in Docker methods, and they run only under the final command. Published v0.4 was 293, plus 66 for the experimental `codex-check` suite gives 359; the 55 added for v0.5 are the comparison and resampling suites, neither of which needs Docker. v0.3 ran 199; those M0-M2 tests keep their semantics. The final command creates and removes real containers using the previously built images, removes only containers it created, and never prunes. Run it sequentially and alone — a second concurrent run is refused by the engine lock by design. Read its stderr for thread tracebacks rather than trusting the exit code, because a telemetry reader thread can die through `threading.excepthook` without failing the run. Check [GitHub Actions](https://github.com/AnkitPorwal04/evalnoise/actions) for the result of the specific commit; local success is not proof of remote CI success.
 
 ## Current Limits
 
-No live provider client in the measurement core, no credential file is ever read by EvalNoise, no Harbor integration, no repository/patch artifact transfer, no API proxy, distributed workers, signed artifacts, statistical confidence intervals, web control plane, or multi-tenant isolation yet. Verifier and tool input is a bounded JSON value, not an arbitrary filesystem or archive. Agent tools are a fixed, stateless, read-only table with no shell and no expression evaluation, because every step is a fresh container; stateful tools are deferred. Provider retry and timeout attribution is simulated from recorded outcomes, not measured. The budget ledger is synthetic and its prompt estimate is a character heuristic, not a provider tokenizer, so it is not a spending control for a real provider. No resume. CPU quotas are not dedicated CPUs. Host caches and other workloads are uncontrolled. CLI polling and optional sampling add overhead. Timeouts are best-effort host deadlines, not real-time guarantees. Local evidence can be edited and logs may contain secrets.
+No live provider client in the measurement core, no credential file is ever read by EvalNoise, no Harbor integration, no repository/patch artifact transfer, no API proxy, distributed workers, signed artifacts, web control plane, or multi-tenant isolation yet. Verifier and tool input is a bounded JSON value, not an arbitrary filesystem or archive. Agent tools are a fixed, stateless, read-only table with no shell and no expression evaluation, because every step is a fresh container; stateful tools are deferred. Provider retry and timeout attribution is simulated from recorded outcomes, not measured. The budget ledger is synthetic and its prompt estimate is a character heuristic, not a provider tokenizer, so it is not a spending control for a real provider. No resume. CPU quotas are not dedicated CPUs. Host caches and other workloads are uncontrolled. CLI polling and optional sampling add overhead. Timeouts are best-effort host deadlines, not real-time guarantees. Local evidence can be edited and logs may contain secrets. Paired comparisons are descriptive only and publish no uncertainty: the configured suite is a fixed set of scripted tasks rather than a random sample, and the prototype resampler failed its own coverage characterisation, so intervals are withheld pending independent methodology review. Uncertainty, time-block sensitivity, multiple-comparison policy, power analysis, and independent review are all open, so the M4 gate is open.
 
 Measurement fidelity — engine identity, same-engine run coordination, enforcement probes, hard-kill recovery, and loaded batch ordering — is implemented and recorded in the [validation log](docs/validation.md). The agent offline slice is implemented and recorded there too; its full M3 gate stays open until an explicitly authorized and budgeted real-provider run, a public reviewed task subset, and measured retry attribution exist. A larger dashboard comes after those foundations, not instead of them.
