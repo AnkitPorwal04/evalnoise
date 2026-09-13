@@ -337,9 +337,25 @@ Fixed with a comparison-scoped `COMPARISON_STYLE` block appended **after** the s
 
 This is one browser engine at two viewports. It is not cross-browser, accessibility, or print-layout validation.
 
+### v0.5 Remote CI
+
+The published v0.5 commit `b1b4457` passed GitHub Actions run [`34743733001`](https://github.com/AnkitPorwal04/evalnoise/actions/runs/34743733001) on **all five jobs**.
+
+| Job | Discovered | Skipped | Executed | Time |
+| --- | --- | --- | --- | --- |
+| `docker` | 440 | 1 | **439** | 85.0 s |
+| `unit (3.11)` | 440 | 22 | **418** | 30.7 s |
+| `unit (3.12)` | 440 | 22 | **418** | 29.1 s |
+| `unit (3.13)` | 440 | 22 | **418** | 25.2 s |
+| `unit (3.14)` | 440 | 22 | **418** | 24.4 s |
+
+The Docker job built all four images and skipped only `test_compat.RealInterpreterTests.test_python311_compiles_every_package`, because no `python3.11` is on `PATH` under that name there. The four unit jobs skip the 21 opt-in Docker methods plus that same check. **The real-3.11 compile guard therefore still does not execute anywhere in CI**, on any job, exactly as recorded for v0.4; it runs only on this workstation. Do not read a green CI as evidence that that guard ran.
+
+Remote CI on GitHub-hosted amd64 runners did **not** reproduce the local image-resolution intermittency, which has only ever been observed on the macOS Docker Desktop VM. One green remote run is not a sample and is not evidence about that intermittency. The workflow again emitted the non-blocking warning that `actions/checkout@v4` and `actions/setup-python@v5` target the deprecated Node.js 20 and are forced onto Node.js 24; no job failed because of it and no action was pinned or upgraded in response.
+
 ### v0.5 Remaining Gaps
 
-The **M4 gate is open and not close to passing.** Not delivered: any uncertainty estimate, a defensible estimand for a fixed configured suite, a method with demonstrated coverage at realistic task counts, independent methodology review, time-block sensitivity, multiple-comparison policy, cost/reliability frontiers, and power analysis. No inferential claim has been made from any EvalNoise data. Browser inspection **has now been performed** and is recorded below. Remote CI status is recorded below. The full M3 live-provider gate is untouched and also remains open.
+The **M4 gate is open and not close to passing.** Not delivered: any uncertainty estimate, a defensible estimand for a fixed configured suite, a method with demonstrated coverage at realistic task counts, independent methodology review, time-block sensitivity, multiple-comparison policy, cost/reliability frontiers, and power analysis. No inferential claim has been made from any EvalNoise data. Browser inspection **has now been performed** and is recorded below. Remote CI is recorded below. The full M3 live-provider gate is untouched and also remains open.
 
 ### Remaining Gaps
 
