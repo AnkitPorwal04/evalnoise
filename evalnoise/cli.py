@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from .budget import BudgetError
+from .compare import CompareError, compare, write as write_comparison
 from .config import ConfigError, load, plan
 from .coordination import CoordinationError
 from .provider import ProviderError
@@ -13,6 +14,7 @@ from .docker import Docker, DockerError
 from .probe import run as probe_run
 from .recovery import RecoveryError, cleanup, diagnose
 from .report import generate
+from .resample import ResampleError
 from .runner import execute
 from .subscription import SubscriptionCheckError, check as subscription_check
 
@@ -39,6 +41,18 @@ def main(argv=None):
     enforcement.add_argument("--image", default="evalnoise-probe:local")
     enforcement.add_argument("--output", type=Path, default=Path("runs"))
     enforcement.add_argument("--trust-config", action="store_true", help="Acknowledge that the probe image is trusted code this command will execute")
+    contrast = commands.add_parser(
+        "compare",
+        help="Offline paired comparison of two recorded profiles; no Docker and no model calls")
+    contrast.add_argument("baseline_run", type=Path, help="Run directory holding the baseline arm")
+    contrast.add_argument("candidate_run", type=Path, nargs="?", default=None,
+                          help="Run directory holding the candidate arm; defaults to the baseline run")
+    contrast.add_argument("--baseline", required=True, help="Baseline profile ID, named before the numbers exist")
+    contrast.add_argument("--candidate", required=True, help="Candidate profile ID, named before the numbers exist")
+    contrast.add_argument("--treatment", action="append", default=[], metavar="FIELD",
+                          help="Declare a field that is allowed to differ. Undeclared differences are refused.")
+    contrast.add_argument("--output", type=Path, default=None,
+                          help="Directory for comparison.json/.csv/.html; omit to print JSON only")
     subscription = commands.add_parser(
         "codex-check",
         help="One known-answer Codex subscription smoke check; not a provider benchmark")
@@ -59,6 +73,13 @@ def main(argv=None):
             print(json.dumps(Docker().doctor(), indent=2))
         elif args.command == "report":
             print(json.dumps(generate(args.directory), indent=2))
+        elif args.command == "compare":
+            result = compare(args.baseline_run, args.baseline,
+                             args.candidate_run or args.baseline_run, args.candidate,
+                             treatment=args.treatment)
+            if args.output is not None:
+                result["artifacts"] = write_comparison(result, args.output)
+            print(json.dumps(result, indent=2))
         elif args.command == "diagnose":
             print(json.dumps(diagnose(Docker(), args.directory), indent=2))
         elif args.command == "cleanup":
@@ -87,7 +108,8 @@ def main(argv=None):
                                   "report": str((directory / "report.html").resolve())}, indent=2))
                 return 0 if summary["status"] == "completed" else 2
         return 0
-    except (BudgetError, ConfigError, CoordinationError, DockerError, ProviderError,
-            RecoveryError, SubscriptionCheckError, OSError, ValueError, KeyError) as error:
+    except (BudgetError, CompareError, ConfigError, CoordinationError, DockerError,
+            ProviderError, RecoveryError, ResampleError, SubscriptionCheckError,
+            OSError, ValueError, KeyError) as error:
         print(f"evalnoise: {error}", file=sys.stderr)
         return 2
