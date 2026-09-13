@@ -11,6 +11,10 @@ from .storage import write_json
 from .verification import contract_hash
 
 
+STYLE = """:root{color-scheme:light;--ink:#172c35;--paper:#f4f2eb;--muted:#52656b;--line:#ced5cf;--accent:#12684d}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 Georgia,serif}main{max-width:1250px;margin:auto;padding:48px 24px}header{border-top:6px solid var(--ink);padding-top:22px}small,.label,th,summary{font-family:system-ui,sans-serif}.label{letter-spacing:.15em;color:var(--accent);font-size:12px;font-weight:700}h1{font-size:clamp(32px,6vw,62px);line-height:1.1;margin:18px 0}h2{font-size:27px;margin:38px 0 12px}p{max-width:850px}.notice{border-left:4px solid var(--accent);padding:12px 22px;background:#e7ede5}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;text-align:left;font-size:14px}th,td{padding:15px 12px;border-bottom:1px solid var(--line);vertical-align:top}th{font-weight:600}.comparisons{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:24px}article{border-top:2px solid var(--line);padding-top:10px}article strong{font:24px system-ui,sans-serif;color:var(--accent)}details{border-top:1px solid var(--line);padding:14px 0}summary{cursor:pointer;overflow-wrap:anywhere}summary b{float:right;margin-left:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:460px;overflow:auto;background:#e9e9e1;padding:16px;font:12px/1.6 monospace}footer{margin-top:36px;color:var(--muted);font-size:13px}@media(max-width:600px){main{padding:24px 16px}summary b{float:none;display:block}}"""
+
+
 def _total(values):
     present = [value for value in values if type(value) is int]
     return sum(present) if present else None
@@ -292,8 +296,7 @@ def generate(directory):
     page = f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <title>EvalNoise / {esc(manifest['config']['name'])}</title><style>
-:root{{color-scheme:light;--ink:#172c35;--paper:#f4f2eb;--muted:#52656b;--line:#ced5cf;--accent:#12684d}}
-*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 Georgia,serif}}main{{max-width:1250px;margin:auto;padding:48px 24px}}header{{border-top:6px solid var(--ink);padding-top:22px}}small,.label,th,summary{{font-family:system-ui,sans-serif}}.label{{letter-spacing:.15em;color:var(--accent);font-size:12px;font-weight:700}}h1{{font-size:clamp(32px,6vw,62px);line-height:1.1;margin:18px 0}}h2{{font-size:27px;margin:38px 0 12px}}p{{max-width:850px}}.notice{{border-left:4px solid var(--accent);padding:12px 22px;background:#e7ede5}}.scroll{{overflow:auto}}table{{border-collapse:collapse;width:100%;text-align:left;font-size:14px}}th,td{{padding:15px 12px;border-bottom:1px solid var(--line);vertical-align:top}}th{{font-weight:600}}.comparisons{{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:24px}}article{{border-top:2px solid var(--line);padding-top:10px}}article strong{{font:24px system-ui,sans-serif;color:var(--accent)}}details{{border-top:1px solid var(--line);padding:14px 0}}summary{{cursor:pointer;overflow-wrap:anywhere}}summary b{{float:right;margin-left:12px}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;max-height:460px;overflow:auto;background:#e9e9e1;padding:16px;font:12px/1.6 monospace}}footer{{margin-top:36px;color:var(--muted);font-size:13px}}@media(max-width:600px){{main{{padding:24px 16px}}summary b{{float:none;display:block}}}}
+{STYLE}
 </style><main><header><span class="label">EVALNOISE / EXPERIMENT NOTEBOOK</span><h1>{esc(manifest['config']['name'])}</h1>
 <p>Infrastructure changes the conditions of a test. This report preserves what ran, what finished, and what the evidence supports.</p>
 <small>Run {esc(manifest['run_id'])} / {esc(manifest['started_at'])} / Status: {esc(manifest['status'])}</small></header>
