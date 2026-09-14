@@ -7,12 +7,14 @@ import os
 from pathlib import Path
 import re
 import stat
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
+from .investigation import canonical, digest, selected, provenance, matrix, timeline
 
 SAFE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
 LIMIT = 16 * 1024 * 1024
 STYLE = """*{box-sizing:border-box}body{margin:0;background:#f4f2ea;color:#193c34;font:16px/1.5 Georgia,serif}header,main,footer{max-width:1300px;margin:auto;padding:25px 5%}header{border-bottom:1px solid #c9d2c7;display:flex;justify-content:space-between}a{color:inherit}header a{text-decoration:none;font-weight:bold}small,.meta{font:12px/1.6 monospace;color:#61736b}h1{font-size:clamp(32px,5vw,56px);line-height:1.1;letter-spacing:-1px;overflow-wrap:anywhere}h2{font-size:26px}p{max-width:850px}.scroll{overflow:auto;border:1px solid #c9d2c7;max-height:600px}table{border-collapse:collapse;width:100%;font:12px monospace}th,td{text-align:left;padding:14px;border-bottom:1px solid #c9d2c7;white-space:nowrap}th{background:#e6eae0;position:sticky;top:0}pre{background:#e9ece3;padding:20px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:600px;overflow:auto;font:12px/1.6 monospace}details{border-top:1px solid #c9d2c7;margin:22px 0;padding-top:15px}summary{cursor:pointer}input,select{padding:12px;background:#fffdf7;border:1px solid #c9d2c7;font:13px monospace;max-width:100%}.filters{display:flex;gap:14px;flex-wrap:wrap;margin:25px 0}label{display:grid;gap:5px;font:12px monospace}.stats{display:flex;gap:35px;flex-wrap:wrap;padding:20px 0;border-block:1px solid #c9d2c7}.stats b{display:block;font-size:32px}.stats span{font:11px monospace}footer{font:11px monospace}a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #c49338;outline-offset:3px}"""
-SCRIPT = """const filters=[...document.querySelectorAll('[data-filter]')];function apply(){let count=0;for(const row of document.querySelectorAll('tbody tr')){const show=filters.every(f=>{const text=f.dataset.filter==='search'?row.textContent:row.dataset[f.dataset.filter];return !f.value || (f.dataset.filter==='search'?text.toLowerCase().includes(f.value.toLowerCase()):text===f.value)});row.hidden=!show;if(show)count++}document.getElementById('count').textContent=count+' visible records'}for(const f of filters)f.addEventListener('input',apply);if(filters.length)apply();"""
+SCRIPT = (Path(__file__).parent / 'workbench.js').read_text()
+STYLE += 'button{padding:10px;cursor:pointer;background:#193c34;color:#fff;border:0}figure{margin:25px 0}svg{width:100%;max-width:740px;background:#e9ece3}svg path{fill:none;stroke:#61736b}svg circle{fill:#193c34}svg text{font:11px monospace;fill:#193c34}.diff td{white-space:normal;overflow-wrap:anywhere;max-width:400px}.different{background:#f4e4cf}.unknown{background:#ece9e3}'
 
 
 def esc(value):
@@ -78,16 +80,39 @@ class Store:
             except (OSError, ValueError, KeyError, TypeError):
                 name, status, kind = path.name, 'unreadable', 'unknown'
             rows.append(f'<tr><td><a href="/run/{esc(path.name)}">{esc(name)}</a></td><td>{esc(status)}</td><td>{esc(kind)}</td><td>{esc(path.name)}</td></tr>')
-        return page('Look beyond the score.', '<p>Browse outcomes, resource profiles, agent traces, and verifier evidence. This workbench never executes experiments or regenerates historical files.</p><label>Find a run<input data-filter="search" placeholder="Name, status, or run ID"></label><p id="count" class="meta"></p><div class="scroll"><table><thead><tr><th>Run</th><th>Status</th><th>Contract</th><th>Directory</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>')
+        choices = ''.join(f'<option>{esc(p.name)}</option>' for p in sorted(paths) if not p.is_symlink() and SAFE.fullmatch(p.name) and (p/'manifest.json').is_file())
+        compare = f'<details><summary>Compare run provenance</summary><div class="filters"><label>Baseline run<select id="baseline">{choices}</select></label><label>Candidate run<select id="candidate">{choices}</select></label><button id="compare-go">Compare provenance</button></div></details>'
+        return page('Look beyond the score.', '<p>Browse outcomes, resource profiles, agent traces, and verifier evidence. This workbench never executes experiments or regenerates historical files.</p>'+compare+'<label>Find a run<input data-filter="search" placeholder="Name, status, or run ID"></label><p id="count" class="meta"></p><div class="scroll"><table id="records"><thead><tr><th>Run</th><th>Status</th><th>Contract</th><th>Directory</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>')
 
-    def run(self, name):
+    def snapshot(self, name):
         m = self.read(name, 'manifest.json')
         records, total = [], 0
-        for path in sorted((self.root / name / 'trials').glob('*.json')):
+        paths = list(islice((self.root / name / 'trials').glob('*.json'), 10001))
+        for path in sorted(paths):
             total += path.stat().st_size
             if len(records) >= 10000 or total > 64 * 1024 * 1024:
                 raise ValueError('Run exceeds viewing limits')
             records.append((path.name, self.read(name, path.name, trial=True)))
+        return m, records
+
+    def export(self, name, filters):
+        m, records = self.snapshot(name)
+        subset = selected(records, filters)
+        return {'kind':'filtered_evidence_export','run_directory':name,'run_id':m.get('run_id'),
+                'manifest_sha256':digest(m),'source_snapshot_sha256':digest([m,records]),
+                'filters':filters,'recorded_count':len(records),'selected_count':len(subset),
+                'planned_count':sum(len(b['trials']) for b in m['plan']),
+                'records':[{'source_file':file,'sha256':digest(t),'trial':t} for file,t in subset],
+                'note':'Filtered snapshot, not a complete experiment or signed attestation; source files were not modified.'}
+
+    def compare(self, baseline, candidate):
+        a,b = self.read(baseline,'manifest.json'),self.read(candidate,'manifest.json')
+        result = provenance(a,b)
+        rows = ''.join(f'<tr class="{r["state"]}"><td>{esc(r["field"])}</td><td>{esc(r["state"])}</td><td>{esc(json.dumps(r["baseline"]))}</td><td>{esc(json.dumps(r["candidate"]))}</td></tr>' for r in result['rows'])
+        return page('Provenance differences',f'<p><strong>{esc(result["verdict"])}</strong></p><p>{esc(result["note"])}</p><p class="meta">{esc(baseline)} versus {esc(candidate)}</p><div class="scroll"><table class="diff"><thead><tr><th>Field</th><th>State</th><th>Baseline</th><th>Candidate</th></tr></thead><tbody>{rows}</tbody></table></div>')
+
+    def run(self, name):
+        m, records = self.snapshot(name)
         passed = sum(t.get('status') == 'passed' for _, t in records)
         planned = sum(len(b['trials']) for b in m['plan'])
         stats = ''.join(f'<div><b>{v}</b><span>{k}</span></div>' for k,v in [('Recorded',len(records)),('Clean passes',passed),('Other recorded',len(records)-passed),('Missing',max(0,planned-len(records)))])
@@ -99,10 +124,13 @@ class Store:
         rows = []
         for file,t in records:
             attrs = ' '.join(f'data-{k}="{esc(t.get(k, "unknown"))}"' for k in ('profile','status','task'))
+            attrs += ' data-search="'+esc(' '.join(str(t.get(k,'')) for k in ('id','task','profile','repeat','status'))) +'"'
             cells = ''.join(f'<td>{esc(t.get(k, "Not recorded"))}</td>' for k in ('task','profile','repeat','status'))
             duration = t.get('container_duration_s')
             rows.append(f'<tr {attrs}>{cells}<td>{esc(duration if duration is not None else "Not measured")}</td><td><a href="/trial/{esc(name)}/{esc(file)}">Inspect evidence</a></td></tr>')
-        return page(m['config']['name'], f'<p class="meta">{esc(name)} · {esc(m["status"])}</p><div class="stats">{stats}</div><p>Display of recorded evidence, not an integrity attestation. Active runs may change between reads. All recorded non-passes remain visible; missing trials are separate.</p><div class="filters">{filters}</div><p id="count" class="meta"></p><div class="scroll"><table><thead><tr><th>Task</th><th>Profile</th><th>Repeat</th><th>Outcome</th><th>Workload seconds</th><th>Evidence</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>' + details('Resource profiles',m['config']['profiles']) + details('Engine provenance',{'environment':m.get('environment'),'identity':m.get('engine_identity'),'final':m.get('engine_identity_final')}) + details('Full manifest',m))
+        controls = f'<div class="filters"><label><input id="live" type="checkbox">Refresh every 5 seconds</label><button id="refresh">Refresh snapshot</button><a data-export="/export/{esc(name)}" href="/export/{esc(name)}">Download filtered JSON</a></div><p id="refresh-status" role="status" class="meta">Manual snapshot · live refresh is opt-in</p>'
+        outcomes = ''.join(f'<tr><td>{esc(r["task"])}</td><td>{esc(r["profile"])}</td><td>{esc(r["status"])}</td><td>{r["count"]}</td></tr>' for r in matrix(records))
+        return page(m['config']['name'], f'<p class="meta">{esc(name)} · {esc(m["status"])}</p><div class="stats">{stats}</div><p>Display of recorded evidence, not an integrity attestation. Active runs may change between reads. All recorded non-passes remain visible; missing trials are separate.</p>{controls}<div class="filters">{filters}</div><p id="count" class="meta"></p><div class="scroll"><table id="records"><thead><tr><th>Task</th><th>Profile</th><th>Repeat</th><th>Outcome</th><th>Workload seconds</th><th>Evidence</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div><details><summary>Full-run outcome matrix (unfiltered)</summary><div class="scroll"><table><thead><tr><th>Task</th><th>Profile</th><th>Outcome</th><th>Count</th></tr></thead><tbody>{outcomes}</tbody></table></div></details>' + details('Resource profiles',m['config']['profiles']) + details('Engine provenance',{'environment':m.get('environment'),'identity':m.get('engine_identity'),'final':m.get('engine_identity_final')}) + details('Full manifest',m))
 
     def trial(self, run, file):
         if not file.endswith('.json') or file == 'manifest.json':
@@ -110,6 +138,11 @@ class Store:
         self.read(run, 'manifest.json')
         t = self.read(run, file, trial=True)
         body = f'<p><a href="/run/{esc(run)}">← Back to run</a></p><p class="meta">{esc(t.get("status"))} · {esc(t.get("task"))} · {esc(t.get("profile"))}</p>'
+        body += '<h2>Resource timeline</h2>' + timeline(t)
+        for step in (t.get('agent') or {}).get('steps', []):
+            child = (step.get('extra') or {}).get('tool_trial')
+            if child:
+                body += '<details><summary>Tool step '+esc(step.get('step_id'))+' timeline (own clock)</summary>'+timeline(child)+'</details>'
         for key in ('agent','verification','resource_audit','telemetry_meta','logs','error'):
             if t.get(key) is not None:
                 body += details(key.replace('_',' ').title(), t[key])
@@ -128,14 +161,16 @@ def server(root, port=4178):
         def log_message(self, format, *args):
             return
 
-        def respond(self, status, data, kind='text/html'):
+        def respond(self, status, data, kind='text/html', download=False):
             self.send_response(status)
             self.send_header('Content-Type', kind + '; charset=utf-8')
             self.send_header('Content-Length',str(len(data)))
             self.send_header('Cache-Control','no-store')
             self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Referrer-Policy','no-referrer')
-            self.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+            if download:
+                self.send_header('Content-Disposition','attachment; filename="evalnoise-filtered.json"')
+            self.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
             self.end_headers()
             self.wfile.write(data)
 
@@ -148,6 +183,9 @@ def server(root, port=4178):
                 return self.respond(403,b'Loopback same-origin access required','text/plain')
             parts = urlsplit(self.path).path.split('/')
             try:
+                query = parse_qs(urlsplit(self.path).query, max_num_fields=10)
+                if any(len(v)!=1 or len(v[0])>256 for v in query.values()):
+                    raise ValueError('Invalid query')
                 if parts == ['','']:
                     data = store.library()
                 elif parts == ['','style.css']:
@@ -158,6 +196,10 @@ def server(root, port=4178):
                     data = store.run(parts[2])
                 elif len(parts)==4 and parts[1]=='trial':
                     data = store.trial(parts[2],parts[3])
+                elif parts == ['','provenance'] and set(query)=={'baseline','candidate'}:
+                    data = store.compare(query['baseline'][0],query['candidate'][0])
+                elif len(parts)==3 and parts[1]=='export' and not set(query)-{'search','task','profile','status'}:
+                    return self.respond(200,canonical(store.export(parts[2],{k:v[0] for k,v in query.items()})), 'application/json',True)
                 else:
                     return self.respond(404,b'Not found','text/plain')
                 self.respond(200,data)
