@@ -95,18 +95,29 @@ The prototype resampler is retained at `evalnoise/resample.py` as an unexposed r
 
 ## M5: Local Experiment Workbench
 
-**Read-only viewing slice implemented:** the `workbench` command provides a
+**Local workbench implemented and browser-tested:** the `workbench` command provides a
 loopback run library, outcome/profile/task filtering, explicit recorded/missing
 counts, and expandable trial, agent, verifier, and provenance evidence. See
-[workbench usage, security boundary, and validation](workbench.md). The broader
-gate below remains open for streaming progress, timelines, provenance diffing,
-filtered exports, and automated browser regression coverage.
+[workbench usage, security boundary, and validation](workbench.md). Opt-in polling
+progress, raw resource timelines, provenance diffing, filtered exports, the outcome
+matrix, and automated Chromium desktop/mobile regressions are now implemented.
+No execution controls were added to this viewer.
 
 Read-only run browser, live progress, outcome matrix, resource timeline, side-by-side provenance differences, inspectable trace/verifier output, filtered exports, and explicit incomplete-run warnings. Add execution controls only with a reviewed local authorization boundary.
 
 Gate: accessible desktop/mobile navigation, no hidden denominator changes, no stale cross-run state, no public Docker control endpoint, and browser regression coverage.
 
 ## M6: Distributed And Collaborative Platform
+
+**Authenticated local coordinator pilot implemented.** The concrete deployment
+boundary, tested guarantees and commands are in [the runbook](cluster.md) and
+[threat model](m6-design.md). Owner/worker/admin roles, transactional leases,
+attempt fencing, image/pool capability checks, trial/storage/job quotas, retained
+artifacts, owner purge, HMAC receipts and audit integrity are exercised locally.
+Process-kill recovery and real Docker jobs are tested. This closes the local
+coordination slice, not a distributed production deployment gate: multi-host TLS,
+isolated hostile-tenant engines, richer capability scheduling, public-key signing,
+key rotation and failover remain deployment work. HMAC is not a public signature.
 
 Authenticated workers, isolated execution pools, capability negotiation, artifact storage/retention, experiment ownership, access control, quotas, audit logs, and signed manifests. Define deployment and incident-response requirements before implementation.
 

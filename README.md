@@ -4,14 +4,29 @@
 
 Run `python3 -m evalnoise workbench --root runs` and open
 **http://127.0.0.1:4178** to search experiments, filter outcomes, and inspect agent,
-verifier, and infrastructure evidence. This read-only M5 slice has no Docker
+verifier, and infrastructure evidence. M5 now includes opt-in live refresh,
+provenance differences, raw resource plots, an outcome matrix, and filtered JSON
+downloads. The workbench has no Docker
 execution endpoints. See [usage and limits](docs/workbench.md).
 
 **Measure how execution conditions change evaluation outcomes, without mistaking infrastructure failures for model ability.**
 
 EvalNoise is a research-driven experiment runner for controlled resource-profile comparisons. It preserves the configuration, randomized schedule, image identity, container state, bounded logs, missing trials, and descriptive comparisons in an offline experiment notebook.
 
-**Status: v0.5 adds an offline paired comparison slice on top of the v0.4 agent slice. It is not a finished agent-evaluation platform; the full M3 and M4 gates are both open.** The fixtures are scripted calibration workloads and a small reviewed in-repo agent fixture. They validate plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
+**Status: v0.6 completes the local M5 workbench and adds an authenticated, loopback-only M6 coordinator pilot. The full M3 and broader M4 gates remain open, and M6 is not a public multi-tenant service.** The fixtures are scripted calibration workloads and a small reviewed in-repo agent fixture. They validate plumbing; they do not evaluate an LLM or reproduce a published benchmark result.
+
+## Authenticated coordination (M6)
+
+The separate coordinator provides owner-scoped jobs, reviewed immutable-image
+catalogs, worker image allowlists, expiring leases, stale-result fencing, quotas,
+artifact retention, HMAC receipts, and a verified audit chain. Two local owners
+and two worker identities have executed and retrieved separate Docker results.
+It does not accept model providers or arbitrary user-supplied commands.
+
+Start with the [M6 runbook and API contract](docs/cluster.md) and
+[deployment threat model](docs/m6-design.md). Credentials stay in a private local
+state directory, never Git. Wider network deployment, adversarial worker isolation,
+public-key signatures, and high availability are explicitly outside this release.
 
 v0.5 adds `evalnoise compare`, an offline two-arm paired contrast that is **descriptive only**. Summaries are task-weighted: repetitions of a task are averaged within that task before anything is combined, because they share the task, host, schedule block, and seed and are not independent observations. Compatibility **fails closed**: task, verifier, image, provider, model, and schema identity must match and can never be declared as a treatment, and a resource difference is refused as a confounder unless named with `--treatment`.
 
