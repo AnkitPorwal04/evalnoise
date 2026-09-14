@@ -23,6 +23,24 @@ from .subscription import SubscriptionCheckError, check as subscription_check
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="evalnoise", description="Measure infrastructure sensitivity, preserve evidence.")
     commands = parser.add_subparsers(dest="command", required=True)
+    init = commands.add_parser('cluster-init', help='Provision a private local coordinator with a reviewed immutable-image catalog')
+    init.add_argument('directory', type=Path)
+    init.add_argument('--catalog', type=Path, required=True)
+    init.add_argument('--trust-config', action='store_true')
+    service = commands.add_parser('cluster-serve', help='Authenticated loopback coordinator, separate from the read-only viewer')
+    service.add_argument('directory', type=Path)
+    service.add_argument('--port', type=int, default=4179)
+    for command in ('cluster-submit','cluster-status','cluster-worker','cluster-audit','cluster-cancel','cluster-purge'):
+        sub = commands.add_parser(command)
+        sub.add_argument('--url',default='http://127.0.0.1:4179')
+        sub.add_argument('--credential',type=Path,required=True)
+        if command=='cluster-submit':
+            sub.add_argument('--catalog',required=True)
+            sub.add_argument('--request-key',required=True)
+        if command in ('cluster-cancel','cluster-purge'): sub.add_argument('--job',required=True)
+        if command=='cluster-worker':
+            sub.add_argument('--output',type=Path,default=Path('runs'))
+            sub.add_argument('--trust-config',action='store_true')
     workbench = commands.add_parser("workbench", help="Read-only local artifact browser; no Docker controls")
     workbench.add_argument("--root", type=Path, default=Path("runs"))
     workbench.add_argument("--port", type=int, default=4178)
@@ -74,6 +92,31 @@ def main(argv=None):
     subscription.add_argument("--codex-binary", default="codex")
     args = parser.parse_args(argv)
     try:
+        if args.command.startswith('cluster-'):
+            from .cluster import Client, credential, decode, server, worker_once
+            from .coordinator import Control, initialize
+            if args.command=='cluster-init':
+                if not args.trust_config: raise ConfigError('Review the catalog, then pass --trust-config')
+                if args.catalog.stat().st_size>1024*1024: raise ConfigError('Catalog exceeds 1 MiB')
+                result=initialize(args.directory,decode(args.catalog.read_bytes()))
+            elif args.command=='cluster-serve':
+                httpd=server(Control(args.directory),args.port)
+                print(f'Authenticated coordinator: http://127.0.0.1:{httpd.server_port}',flush=True)
+                try: httpd.serve_forever()
+                finally: httpd.server_close()
+                return 0
+            else:
+                credentials=credential(args.credential); client=Client(args.url,credentials['token'])
+                if args.command=='cluster-worker':
+                    if not args.trust_config: raise ConfigError('Review worker image allowlist, then pass --trust-config')
+                    result=worker_once(client,credentials['images'],args.output)
+                elif args.command=='cluster-submit': result=client.request('/submit',{'catalog':args.catalog,'request_key':args.request_key})
+                elif args.command=='cluster-audit': result=client.request('/audit')
+                elif args.command in ('cluster-cancel','cluster-purge'):
+                    result=client.request('/'+args.command.removeprefix('cluster-'),{'job':args.job})
+                else: result=client.request('/jobs')
+            print(json.dumps(result,indent=2))
+            return 0
         if args.command == "workbench":
             from .workbench import serve
             serve(args.root, args.port)
