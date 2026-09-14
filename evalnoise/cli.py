@@ -23,6 +23,9 @@ from .subscription import SubscriptionCheckError, check as subscription_check
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="evalnoise", description="Measure infrastructure sensitivity, preserve evidence.")
     commands = parser.add_subparsers(dest="command", required=True)
+    workbench = commands.add_parser("workbench", help="Read-only local artifact browser; no Docker controls")
+    workbench.add_argument("--root", type=Path, default=Path("runs"))
+    workbench.add_argument("--port", type=int, default=4178)
     commands.add_parser("doctor", help="Check the Linux Docker engine and record relevant platform details")
     for name in ("validate", "plan", "run"):
         command = commands.add_parser(name)
@@ -71,6 +74,10 @@ def main(argv=None):
     subscription.add_argument("--codex-binary", default="codex")
     args = parser.parse_args(argv)
     try:
+        if args.command == "workbench":
+            from .workbench import serve
+            serve(args.root, args.port)
+            return 0
         if args.command == "block-analyze":
             result = analyze_blocks(args.directory, args.baseline, args.candidate,
                                     args.treatment, args.alpha)
