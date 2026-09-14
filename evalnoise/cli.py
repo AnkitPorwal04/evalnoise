@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from .budget import BudgetError
+from .blocks import analyze as analyze_blocks, write as write_blocks
 from .compare import CompareError, compare, write as write_comparison
 from .config import ConfigError, load, plan
 from .coordination import CoordinationError
@@ -53,6 +54,13 @@ def main(argv=None):
                           help="Declare a field that is allowed to differ. Undeclared differences are refused.")
     contrast.add_argument("--output", type=Path, default=None,
                           help="Directory for comparison.json/.csv/.html; omit to print JSON only")
+    block = commands.add_parser("block-analyze", help="Fixed-horizon conditional block bound for a completed two-arm study")
+    block.add_argument("directory", type=Path)
+    block.add_argument("--baseline", required=True)
+    block.add_argument("--candidate", required=True)
+    block.add_argument("--treatment", action="append", default=[])
+    block.add_argument("--alpha", type=float, default=0.05)
+    block.add_argument("--output", type=Path)
     subscription = commands.add_parser(
         "codex-check",
         help="One known-answer Codex subscription smoke check; not a provider benchmark")
@@ -63,6 +71,13 @@ def main(argv=None):
     subscription.add_argument("--codex-binary", default="codex")
     args = parser.parse_args(argv)
     try:
+        if args.command == "block-analyze":
+            result = analyze_blocks(args.directory, args.baseline, args.candidate,
+                                    args.treatment, args.alpha)
+            if args.output is not None:
+                result["report"] = write_blocks(result, args.output)
+            print(json.dumps(result, indent=2))
+            return 0
         if args.command == "codex-check":
             result = subscription_check(output=args.output, binary=args.codex_binary,
                                         confirmed=args.confirm_subscription_use,
