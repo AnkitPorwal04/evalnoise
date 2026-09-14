@@ -1,5 +1,10 @@
 # EvalNoise
 
+**Private release preview:** see the [release-readiness guide](docs/release-readiness.md)
+for clean-wheel installation checks, the locally generated static demonstration,
+and explicit stable/pilot/research boundaries. Nothing has been published to PyPI
+or deployed publicly; license selection remains open.
+
 ## Demonstration: resource failure versus wrong output
 
 The [48-trial aggregation study](docs/demonstration-results.md) compares CPU,
