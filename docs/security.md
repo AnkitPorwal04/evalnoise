@@ -10,7 +10,7 @@ Do not run unknown image submissions, generated adversarial agent code, private 
 
 Containers run as UID/GID 65534 with all capabilities dropped, no-new-privileges, Docker's normal seccomp policy, a read-only root, no network, no host mounts, PID limit 128, memory/CPU ceilings, and swap disabled. `/tmp` is a 64 MiB noexec/nosuid/nodev tmpfs. Tmpfs use consumes memory; workloads must be compatible with these restrictions. Image-declared volumes and image contents remain part of the trusted image contract.
 
-The host executes argv arrays, never shell-expanded user strings. Image references and identifiers are constrained. The runner does not mount the Docker socket into workloads, expose a web execution endpoint, pass host credentials, or publish artifacts automatically.
+The host executes argv arrays, never shell-expanded user strings. Image references and identifiers are constrained. The measurement runner does not mount the Docker socket into workloads, pass host credentials, or publish artifacts automatically. The M5 workbench is read-only. The separate opt-in M6 loopback coordinator exposes authenticated job submission for administrator-reviewed immutable-image catalogs, not arbitrary commands or images. Workers independently allowlist images and upload bounded evidence bundles. See [the coordinator trust boundary](m6-design.md) and [operational runbook](cluster.md); this is not an Internet-facing execution service or hostile multi-tenant sandbox.
 
 ## Residual Risks
 

@@ -1,5 +1,16 @@
 # Architecture And Decisions
 
+## Investigation and local coordination extensions
+
+`investigation.py` supplies read-only provenance, selection and resource-plot
+helpers to `workbench.py` and its packaged `workbench.js` asset. No workbench
+route executes workloads or rewrites historical artifacts.
+
+The separately started `coordinator.py`/`cluster.py` pilot uses transactional
+SQLite leases, authenticated owner/worker/admin roles and fenced acceptance.
+Workers reuse the existing runner; browser access does not grant execution
+authority. See [M6 design](m6-design.md) for failure semantics and limitations.
+
 ## Execution Flow
 
 ```text
