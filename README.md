@@ -1,5 +1,15 @@
 # EvalNoise
 
+## Demonstration: resource failure versus wrong output
+
+The [48-trial aggregation study](docs/demonstration-results.md) compares CPU,
+memory and concurrency profiles with independent output verification. It records
+three memory-limited OOM events separately from twelve exit-zero wrong answers.
+Read the [prospective protocol](docs/demonstration-protocol.md), reproduce it with
+`scripts.prepare_demo`, and derive fresh evidence extracts and all three
+comparisons with `scripts.analyze_demo`. Results describe these synthetic tasks
+on one Docker Desktop host, not model capability or general performance.
+
 ## Local evidence workbench
 
 Run `python3 -m evalnoise workbench --root runs` and open
