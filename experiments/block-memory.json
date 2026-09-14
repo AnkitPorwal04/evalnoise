@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "block-memory",
+  "seed": 1701,
+  "repeats": 24,
+  "sample_interval_s": 0,
+  "tasks": [
+    {"id": "cpu", "image": "sha256:d6ef9a0367233ca183876db4bb84f7ad48b32ccbbc9a03a75be66f2b0a07348d", "command": ["python", "/opt/evalnoise/workload.py", "cpu"]},
+    {"id": "memory", "image": "sha256:d6ef9a0367233ca183876db4bb84f7ad48b32ccbbc9a03a75be66f2b0a07348d", "command": ["python", "/opt/evalnoise/workload.py", "memory"]},
+    {"id": "repository", "image": "sha256:d6ef9a0367233ca183876db4bb84f7ad48b32ccbbc9a03a75be66f2b0a07348d", "command": ["python", "/opt/evalnoise/workload.py", "repository"]}
+  ],
+  "profiles": [
+    {"id": "tight", "cpus": 1, "memory_mb": 48, "timeout_s": 15, "concurrency": 1},
+    {"id": "roomy", "cpus": 1, "memory_mb": 256, "timeout_s": 15, "concurrency": 1}
+  ]
+}
