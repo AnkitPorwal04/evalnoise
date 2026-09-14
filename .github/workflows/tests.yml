@@ -3,6 +3,19 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright==1.58.0
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m unittest discover -s tests -p 'test_workbench_browser.py' -v
+        env:
+          EVALNOISE_BROWSER_TESTS: '1'
   unit:
     runs-on: ubuntu-latest
     strategy:
