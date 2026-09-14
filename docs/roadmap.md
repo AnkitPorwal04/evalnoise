@@ -79,7 +79,17 @@ Descriptive slice gate, each item backed by a named test in [the validation log]
 - [x] An undefined summary is `null`, never `0.0`
 - [x] Reports are offline, escaped, CSP-restricted, script-free, and contain no interval or confidence language
 
-**The M4 gate remains OPEN and is not close to passing.** Still required: independent review of the methodology; a defensible estimand, since resampling tasks presumes an exchangeable draw from a population that a fixed configured suite is not; a resampling method with demonstrated coverage, which the prototype does not have; time-block sensitivity; multiple-comparison policy; and cost/reliability frontiers.
+**Fixed-suite block extension implemented and executed:** `block-analyze` supplies
+a fixed-horizon conditional Hoeffding bound, not a resampling interval. Its target
+is the average history-conditional expected block contrast. The complete
+144-trial run and four simulation regimes are recorded in
+[the execution record](m4-execution-record.md). The mathematical assumptions,
+pre-specified validation criteria, and exclusions are in
+[the block protocol](m4-block-protocol.md). `compare` itself remains descriptive.
+This addresses the fixed-suite uncertainty and temporal-dependence slice, not
+stationary-mean inference or a population of tasks. Broader M4 remains open for
+independent review of this new method, multiple-comparison policy, power planning,
+and cost/reliability frontiers; those are not claimed complete by this run.
 
 The prototype resampler is retained at `evalnoise/resample.py` as an unexposed research utility, marked `validated: False`, imported by nothing in the reporting path. Its own characterisation is why it is withheld: the cluster floor it used was derived by treating bootstrap multisets as equiprobable when their probabilities span a 120-fold range at k=5, and measured coverage at that floor is 0.850 against a nominal 0.95 with a 0.150 A/A false-positive rate.
 

@@ -8,7 +8,25 @@ EvalNoise is a research-driven experiment runner for controlled resource-profile
 
 v0.5 adds `evalnoise compare`, an offline two-arm paired contrast that is **descriptive only**. Summaries are task-weighted: repetitions of a task are averaged within that task before anything is combined, because they share the task, host, schedule block, and seed and are not independent observations. Compatibility **fails closed**: task, verifier, image, provider, model, and schema identity must match and can never be declared as a treatment, and a resource difference is refused as a confounder unless named with `--treatment`.
 
-**No uncertainty estimate is published, deliberately.** Every summary reports `bootstrap: null` and `interval_withheld_pending_methodology_review`, and the CLI exposes no confidence, resample, seed, or cluster-floor option. The prototype resampler failed its own characterisation: its cluster floor was derived by treating bootstrap multisets as equiprobable when their probabilities span a 120-fold range, and measured coverage at that floor is 0.850 against a nominal 0.95 with a 0.150 A/A false-positive rate. The estimand is also unsettled, because resampling tasks presumes the fixed configured suite is an exchangeable sample from a population it is not. The resampler is retained at `evalnoise/resample.py` as an unexposed research utility marked `validated: False`; nothing in the reporting path imports it. **The M4 gate is open and not close to passing.**
+`compare` remains descriptive and publishes no bootstrap intervals. A separate
+`block-analyze` command now supports a conservative, fixed-horizon conditional
+Hoeffding bound for complete two-arm, fixed-suite experiments. It does not revive
+the rejected task bootstrap. The target and assumptions are explicit in the
+[block protocol](docs/m4-block-protocol.md); the actual 144-trial Docker study and
+simulation results are in the [execution record](docs/m4-execution-record.md).
+Broader M4 features such as cost frontiers and multiplicity control remain open.
+
+```sh
+python3 -m evalnoise run experiments/block-memory.json --trust-config
+python3 -m evalnoise block-analyze runs/<run-id> --baseline tight --candidate roomy \
+  --treatment memory_mb --output runs/<new-analysis-directory>
+```
+
+The study file pins the local ARM64 image used for the recorded experiment.
+On another host, build the reviewed `workloads/` image and replace its image IDs
+before starting your own study. Output directories must be new; analysis never
+overwrites a previous report. The protocol and horizon must be chosen before
+observing results, not optimized to exclude zero.
 
 ## Why This Exists
 
