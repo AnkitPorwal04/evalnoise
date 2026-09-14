@@ -95,6 +95,13 @@ The prototype resampler is retained at `evalnoise/resample.py` as an unexposed r
 
 ## M5: Local Experiment Workbench
 
+**Read-only viewing slice implemented:** the `workbench` command provides a
+loopback run library, outcome/profile/task filtering, explicit recorded/missing
+counts, and expandable trial, agent, verifier, and provenance evidence. See
+[workbench usage, security boundary, and validation](workbench.md). The broader
+gate below remains open for streaming progress, timelines, provenance diffing,
+filtered exports, and automated browser regression coverage.
+
 Read-only run browser, live progress, outcome matrix, resource timeline, side-by-side provenance differences, inspectable trace/verifier output, filtered exports, and explicit incomplete-run warnings. Add execution controls only with a reviewed local authorization boundary.
 
 Gate: accessible desktop/mobile navigation, no hidden denominator changes, no stale cross-run state, no public Docker control endpoint, and browser regression coverage.

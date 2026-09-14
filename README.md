@@ -1,5 +1,12 @@
 # EvalNoise
 
+## Local evidence workbench
+
+Run `python3 -m evalnoise workbench --root runs` and open
+**http://127.0.0.1:4178** to search experiments, filter outcomes, and inspect agent,
+verifier, and infrastructure evidence. This read-only M5 slice has no Docker
+execution endpoints. See [usage and limits](docs/workbench.md).
+
 **Measure how execution conditions change evaluation outcomes, without mistaking infrastructure failures for model ability.**
 
 EvalNoise is a research-driven experiment runner for controlled resource-profile comparisons. It preserves the configuration, randomized schedule, image identity, container state, bounded logs, missing trials, and descriptive comparisons in an offline experiment notebook.
