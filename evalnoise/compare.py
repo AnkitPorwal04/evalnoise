@@ -431,8 +431,8 @@ def compatibility(baseline, candidate, declared, same_run):
                                     "provider_snapshot", "image_ids"])),
         "attestation_note": (
             "Both arms come from one manifest, one plan, and one image resolution, so task "
-            "identity is structural. These artifacts predate per-trial contract hashes, "
-            "which is why the same artifacts cannot be used for a cross-run contrast."
+            "identity is structural. This within-run check does not assert whether legacy "
+            "contract hashes are present; cross-run eligibility requires separate validation."
             if attestation == "manifest_structural" else
             "Every used trial attests the contract hash it executed and those hashes agree "
             "with both manifests."),

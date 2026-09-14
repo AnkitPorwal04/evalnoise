@@ -31,7 +31,7 @@ def raw_config(tasks=6, repeats=3, profiles=None, name="contrast-fixture"):
 
 def build_run(directory, raw, outcome, *, run_id="fixture01", status="completed",
               contracts=True, images=None, engine="daemon-a", version="0.5.0",
-              engine_identity=NotImplemented, stable=True, finite=True):
+              engine_identity: object = NotImplemented, stable=True, finite=True):
     """Write a run directory whose evidence passes the existing report validation.
 
     The `engine_identity` keys here are deliberately the lowercase ones that
@@ -152,8 +152,14 @@ class CompatibilityTests(unittest.TestCase):
             run = build_run(Path(workspace) / "run", raw_config(), all_pass, contracts=False)
             result = compare(run, "baseline", run, "candidate", treatment=["memory_mb"])
             self.assertEqual(result["compatibility"]["contract_attestation"], "manifest_structural")
-            self.assertIn("predate per-trial contract hashes",
+            self.assertIn("cross-run eligibility requires separate validation",
                           result["compatibility"]["attestation_note"])
+
+    def test_current_within_run_artifacts_are_not_described_as_legacy(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            run = build_run(Path(workspace) / "run", raw_config(), all_pass, contracts=True)
+            result = compare(run, "baseline", run, "candidate", treatment=["memory_mb"])
+            self.assertNotIn("predate", result["compatibility"]["attestation_note"])
 
     def test_cross_run_engine_difference_must_be_declared(self):
         with tempfile.TemporaryDirectory() as workspace:
