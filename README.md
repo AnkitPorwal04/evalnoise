@@ -12,6 +12,7 @@ It helps answer: **did a task produce a wrong answer, exhaust its resources, tim
 
 ## Start here
 
+- **Understand the whole project:** read the [step-by-step guide to how it works and what we have achieved](docs/project-guide.md).
 - **Try a local experiment:** follow the [quick start](#quick-start).
 - **Understand the motivation:** read the [48-trial case study](docs/demonstration-results.md).
 - **Inspect your own runs:** start the [read-only workbench](#inspect-and-compare-results).
