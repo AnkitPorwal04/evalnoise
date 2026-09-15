@@ -254,4 +254,4 @@ For a bug report, include the commit, Python/Docker versions, command, a minimal
 
 ## License
 
-**No license has been selected yet.** Public visibility is not an open-source license or a grant of general reuse, modification or redistribution rights. Contact the maintainer through GitHub before uses requiring permission. A license will be added explicitly rather than inferred from the repository being public.
+EvalNoise is licensed under the [MIT License](LICENSE). You may use, modify and redistribute it, including commercially, provided you retain the copyright and permission notice. The software is provided without warranty; see the license for the complete terms.

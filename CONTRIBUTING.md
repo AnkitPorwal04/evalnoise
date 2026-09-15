@@ -20,4 +20,4 @@ Use Python 3.11+ and run `python3 -m unittest discover -s tests -v`. Runtime cod
 
 Review correctness, resource lifecycle, trust boundaries, artifact compatibility, and interpretation separately. A UI-only change can still change the apparent denominator or hide a failure. An instrumentation change can alter the measured workload. Tests passing is necessary, not sufficient, for methodological validity.
 
-No license is asserted by this scaffold. The repository owner should choose licensing deliberately before presenting it as a licensed open-source release.
+EvalNoise is licensed under the [MIT License](LICENSE). Contributions submitted for inclusion should be compatible with that license. Do not submit code or data you do not have permission to contribute.
