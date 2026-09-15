@@ -1,7 +1,8 @@
-# Release readiness: private preview
+# Release readiness: public source, local preview
 
-EvalNoise 0.6 remains a private development release, not a publicly supported
-service. No license has been selected and no package has been uploaded to PyPI.
+EvalNoise 0.6 is a public source repository with a local development preview, not a publicly supported
+service. Public source visibility does not deploy the demo or coordinator.
+No license has been selected and no package has been uploaded to PyPI.
 An installation check is not a security certification or a completed research gate.
 
 ## Clean installation
@@ -31,12 +32,12 @@ download experiment images, or select a paid provider.
 ## Locally prepared static demonstration
 
 ```sh
-python -m scripts.static_demo runs/aggregation-demonstration-dcc4e21e077d \
-  --output runs/release-preview
+python -m scripts.static_demo RUN_DIRECTORY --output runs/my-static-demo
 ```
 
-The run path is this workstation's preserved study; reproduce the demonstration
-protocol to obtain your own run. The exporter requires all 48 unique cells of the
+Replace `RUN_DIRECTORY` with the path printed by your own demonstration run;
+follow the [README walkthrough](../README.md#reproduce-the-48-trial-demonstration).
+The exporter requires all 48 unique cells of the
 reviewed four-task/four-profile/three-repeat design. It refuses unfamiliar outcome
 categories and arbitrary labels rather than silently hiding them. A new output
 directory is mandatory. Raw evidence is never rewritten.
@@ -62,7 +63,7 @@ observation. No public deployment is part of this step.
   CLI; it is not a working live model adapter.
 - **Still open:** M3 live-provider validation, broader M4 statistical review,
   hostile-worker isolation, production TLS/HA/key rotation, license selection,
-  public-release review and support policy.
+  wider-deployment review and support policy.
 
 ## Verification record
 
