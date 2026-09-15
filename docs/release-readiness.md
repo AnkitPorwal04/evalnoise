@@ -2,7 +2,7 @@
 
 EvalNoise 0.6 is a public source repository with a local development preview, not a publicly supported
 service. Public source visibility does not deploy the demo or coordinator.
-No license has been selected and no package has been uploaded to PyPI.
+The source is licensed under the [MIT License](../LICENSE). No package has been uploaded to PyPI.
 An installation check is not a security certification or a completed research gate.
 
 ## Clean installation
@@ -62,7 +62,7 @@ observation. No public deployment is part of this step.
   The subscription command currently blocks before a model call on the installed
   CLI; it is not a working live model adapter.
 - **Still open:** M3 live-provider validation, broader M4 statistical review,
-  hostile-worker isolation, production TLS/HA/key rotation, license selection,
+  hostile-worker isolation, production TLS/HA/key rotation,
   wider-deployment review and support policy.
 
 ## Verification record
