@@ -103,5 +103,5 @@ Remote CI results are available in the repository's Actions history.
   `concurrent/comparison.html`.
 
 These URLs require the local services and local artifacts; they are not public
-hosted demos. The repository remains private. Publishing reviewed evidence or a
+hosted demos. The source repository is now public and MIT-licensed; raw run data remains local. Publishing reviewed evidence or a
 static demonstration is a separate step; the execution coordinator is not exposed.
